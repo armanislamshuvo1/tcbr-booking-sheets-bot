@@ -197,6 +197,32 @@ const HEADER_ALIASES = {
   'REMARK': ['REMARK', 'REMARKS'],
   'ROOM_PAX': ['ROOM_PAX', 'ROOM PAX'],
   'TOTAL AMOUNT': ['TOTAL AMOUNT', 'TOTAL'],
+  'PIC': ['PIC', 'PERSON IN CHARGE'],
+  'STAYING DAYS': ['STAYING DAYS', 'DAYS', 'STAY DURATION'],
+  'ROOM TYPE': ['ROOM TYPE', 'ROOM_TYPE', 'ROOMTYPE'],
+  'SPECIAL REQUEST': ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'REQUEST'],
+  'GUEST_PAX': ['GUEST_PAX', 'GUESTS', 'PAX'],
+};
+
+const FIXED_COLUMN_INDEX_MAPPINGS = {
+  1: ['CODE'],
+  2: ['PIC', 'PERSON IN CHARGE'],
+  3: ['NAME', 'CUSTOMER NAME'],
+  4: ['SNORKELLING', 'SNORKELING', 'SNORKEL'],
+  5: ['DIVING', 'DIVE'],
+  6: ['COURSE', 'COURSES'],
+  7: ['CHECK IN', 'CHECK-IN', 'CHECKIN'],
+  8: ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'],
+  9: ['STAYING DAYS', 'DAYS', 'STAY DURATION'],
+  10: ['ROOM TYPE', 'ROOM_TYPE', 'ROOMTYPE'],
+  11: ['SHARING'],
+  12: ['BED'],
+  13: ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'REQUEST'],
+  18: ['TOTAL AMOUNT', 'TOTAL'],
+  19: ['DEPOSIT'],
+  20: ['BALANCE'],
+  21: ['STATUS'],
+  22: ['REMARK', 'REMARKS'],
 };
 
 function getOverriddenValue(overrideFields, headerName) {
@@ -230,8 +256,8 @@ function getBookingKey(row, headers, rowIndex) {
  * Applies active overrides onto a list of row objects or raw row arrays.
  * Returns enriched rows array with override values merged in.
  */
-async function applyOverridesToRows(bookingEntries, headers) {
-  const overrides = await loadOverrides();
+async function applyOverridesToRows(bookingEntries, headers, explicitOverrides = null) {
+  const overrides = explicitOverrides || await module.exports.loadOverrides();
   if (!overrides || Object.keys(overrides).length === 0) {
     return bookingEntries;
   }
@@ -257,16 +283,40 @@ async function applyOverridesToRows(bookingEntries, headers) {
     // Merge overridden fields matching headers and aliases
     if (headers && Array.isArray(headers)) {
       headers.forEach((headerName, colIdx) => {
-        if (!headerName) return;
-        const val = getOverriddenValue(override.fields, headerName);
+        let val;
+        if (headerName) {
+          val = getOverriddenValue(override.fields, headerName);
+        }
+        // Fallback for merged columns where headerName is empty in headers array
+        if (val === undefined && FIXED_COLUMN_INDEX_MAPPINGS[colIdx]) {
+          for (const alias of FIXED_COLUMN_INDEX_MAPPINGS[colIdx]) {
+            if (override.fields && override.fields[alias] !== undefined && override.fields[alias] !== '') {
+              val = override.fields[alias];
+              break;
+            }
+          }
+        }
         if (val !== undefined) {
           mergedRow[colIdx] = val;
         }
       });
     }
 
+    // Direct fallback for fixed column indices if row length allows
+    for (const [colIdxStr, fieldAliases] of Object.entries(FIXED_COLUMN_INDEX_MAPPINGS)) {
+      const colIdx = parseInt(colIdxStr, 10);
+      if (mergedRow.length > colIdx) {
+        for (const alias of fieldAliases) {
+          if (override.fields && override.fields[alias] !== undefined && override.fields[alias] !== '') {
+            mergedRow[colIdx] = override.fields[alias];
+            break;
+          }
+        }
+      }
+    }
+
     if (isObject) {
-      return {
+      const resEntry = {
         ...entry,
         row: mergedRow,
         isOverridden: true,
@@ -276,6 +326,11 @@ async function applyOverridesToRows(bookingEntries, headers) {
           bookingKey
         }
       };
+      if (override.fields?.GUEST_PAX) {
+        const p = parseInt(override.fields.GUEST_PAX, 10);
+        if (!isNaN(p) && p > 0) resEntry.pax = p;
+      }
+      return resEntry;
     } else if (Array.isArray(entry)) {
       // Attach non-enumerable properties or wrapper metadata if needed
       mergedRow.isOverridden = true;

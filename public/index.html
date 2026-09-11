@@ -762,36 +762,44 @@
           <button type="button" class="action-btn" onclick="revertBookingEdit()" style="font-size: 0.75rem; padding: 3px 8px; background: rgba(248,81,73,0.2); color: var(--red); border-color: rgba(248,81,73,0.4);">Revert to Sheet Values</button>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Customer Name</label>
             <input type="text" id="edit-field-name" placeholder="Guest Name" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Booking Code</label>
-            <input type="text" id="edit-field-code" placeholder="e.g. K6, F1" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="text" id="edit-field-code" placeholder="e.g. L4, K6" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">PIC</label>
+            <input type="text" id="edit-field-pic" placeholder="e.g. Jen" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Check In Date</label>
-            <input type="text" id="edit-field-checkin" placeholder="e.g. 10/06/2026" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="text" id="edit-field-checkin" placeholder="e.g. 12th Sept" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Check Out Date</label>
-            <input type="text" id="edit-field-checkout" placeholder="e.g. 13/06/2026" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="text" id="edit-field-checkout" placeholder="e.g. 15th Sept" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Staying Days</label>
+            <input type="text" id="edit-field-staying-days" placeholder="e.g. 4D3N" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Snorkeling</label>
-            <input type="text" id="edit-field-snorkeling" placeholder="e.g. 2 Pax" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" id="edit-field-snorkeling" placeholder="e.g. 29A, 4C" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.85rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Diving</label>
-            <input type="text" id="edit-field-diving" placeholder="e.g. 1 Pax" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" id="edit-field-diving" placeholder="e.g. 1A (5 Dives)" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.85rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Course</label>
@@ -799,14 +807,25 @@
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Allocation</label>
-            <input type="text" id="edit-field-room" placeholder="e.g. S101" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="text" id="edit-field-room" placeholder="e.g. S101 (3 Pax), V102 (2 Pax)" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
           <div>
-            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Pax</label>
-            <input type="text" id="edit-field-roompax" placeholder="e.g. 2" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Type</label>
+            <input type="text" id="edit-field-roomtype" placeholder="e.g. 1 Seaview Villa, 7 Beach Front" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+          <div>
+            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Guest Pax (Activity / Headcount)</label>
+            <input type="text" id="edit-field-guestpax" placeholder="e.g. 34" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Bed Capacity (Room Pax)</label>
+            <input type="text" id="edit-field-roompax" placeholder="e.g. 30" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
         </div>
 
@@ -829,9 +848,14 @@
           </div>
         </div>
 
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Special Request</label>
+          <input type="text" id="edit-field-special-request" placeholder="e.g. Vegetarian meals, Birthday setup, Extra mattress..." style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+        </div>
+
         <div style="margin-bottom: 20px;">
-          <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Remarks & Special Notes</label>
-          <textarea id="edit-field-remark" rows="3" placeholder="Remarks or internal notes..." style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 0.85rem; outline: none; resize: vertical;"></textarea>
+          <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Remarks & Internal Notes</label>
+          <textarea id="edit-field-remark" rows="2" placeholder="Remarks or internal notes..." style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 0.85rem; outline: none; resize: vertical;"></textarea>
         </div>
 
         <!-- Form Actions -->

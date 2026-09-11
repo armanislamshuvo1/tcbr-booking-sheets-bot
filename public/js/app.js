@@ -2430,10 +2430,10 @@ function openEditBookingModalByIndex(rowIndex, code) {
   const headers = bookingsHeaders || [];
   const rowData = booking ? (booking.row || []) : [];
 
-  openEditBookingModal(rowData, headers, rowIndex, booking ? booking.overrideMeta : null, booking ? booking.isOverridden : false);
+  openEditBookingModal(rowData, headers, rowIndex, booking ? booking.overrideMeta : null, booking ? booking.isOverridden : false, booking);
 }
 
-function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverridden) {
+function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverridden, booking) {
   const modal = document.getElementById('edit-booking-modal');
   if (!modal) return;
 
@@ -2443,6 +2443,19 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
     return idx !== -1 ? (rowData[idx] || '') : '';
   };
 
+  const getFieldVal = (name, aliases = [], fallbackIndex = -1) => {
+    let val = getColVal(name);
+    if (val !== undefined && val !== null && String(val).trim() !== '') return String(val).trim();
+    for (const a of aliases) {
+      val = getColVal(a);
+      if (val !== undefined && val !== null && String(val).trim() !== '') return String(val).trim();
+    }
+    if (fallbackIndex !== -1 && rowData[fallbackIndex] !== undefined && rowData[fallbackIndex] !== null && String(rowData[fallbackIndex]).trim() !== '') {
+      return String(rowData[fallbackIndex]).trim();
+    }
+    return '';
+  };
+
   const key = `ROW_${rowIndex}`;
   currentEditingBookingKey = key;
   currentEditingRowIndex = rowIndex;
@@ -2450,20 +2463,45 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   document.getElementById('edit-booking-key').value = key;
   document.getElementById('edit-booking-row-index').value = rowIndex;
 
-  document.getElementById('edit-field-name').value = getColVal('NAME');
-  document.getElementById('edit-field-code').value = getColVal('CODE');
-  document.getElementById('edit-field-checkin').value = getColVal('CHECK IN') || getColVal('CHECK-IN') || getColVal('CHECKIN');
-  document.getElementById('edit-field-checkout').value = getColVal('CHECK OUT') || getColVal('CHECK-OUT') || getColVal('CHECKOUT');
-  document.getElementById('edit-field-snorkeling').value = getColVal('SNORKELING') || getColVal('SNORKEL');
-  document.getElementById('edit-field-diving').value = getColVal('DIVING') || getColVal('DIVE');
-  document.getElementById('edit-field-course').value = getColVal('COURSE');
-  document.getElementById('edit-field-room').value = getColVal('ROOM');
-  document.getElementById('edit-field-roompax').value = getColVal('ROOM_PAX');
-  document.getElementById('edit-field-total').value = getColVal('TOTAL AMOUNT') || getColVal('TOTAL');
-  document.getElementById('edit-field-deposit').value = getColVal('DEPOSIT');
-  document.getElementById('edit-field-balance').value = getColVal('BALANCE');
-  document.getElementById('edit-field-status').value = getColVal('STATUS');
-  document.getElementById('edit-field-remark').value = getColVal('REMARK') || getColVal('REMARKS');
+  // Basic Details
+  document.getElementById('edit-field-name').value = getFieldVal('NAME', ['CUSTOMER NAME', 'GUEST NAME'], 3);
+  document.getElementById('edit-field-code').value = getFieldVal('CODE', ['BOOKING CODE'], 1);
+  document.getElementById('edit-field-pic').value = getFieldVal('PIC', ['PERSON IN CHARGE'], 2);
+
+  // Dates & Duration
+  document.getElementById('edit-field-checkin').value = getFieldVal('CHECK IN', ['CHECK-IN', 'CHECKIN'], 7);
+  document.getElementById('edit-field-checkout').value = getFieldVal('CHECK OUT', ['CHECK-OUT', 'CHECKOUT'], 8);
+  document.getElementById('edit-field-staying-days').value = getFieldVal('STAYING DAYS', ['DAYS', 'STAY DURATION', 'ROOM DETAILS'], 9);
+
+  // Activities (supports SNORKELLING with double-L, SNORKELING, SNORKEL, or col 4)
+  document.getElementById('edit-field-snorkeling').value = getFieldVal('SNORKELLING', ['SNORKELING', 'SNORKEL'], 4);
+  document.getElementById('edit-field-diving').value = getFieldVal('DIVING', ['DIVE'], 5);
+  document.getElementById('edit-field-course').value = getFieldVal('COURSE', ['COURSES'], 6);
+
+  // Room Information
+  document.getElementById('edit-field-room').value = getFieldVal('ROOM', ['ROOM ASSIGNED', 'ROOM_ASSIGNED'], 25);
+  document.getElementById('edit-field-roomtype').value = getFieldVal('ROOM TYPE', ['ROOM_TYPE', 'ROOMTYPE'], 10);
+
+  // Pax calculation (Activity / Headcount Pax vs Room Bed Pax)
+  let actPax = 0;
+  try {
+    actPax = getRowActivityPaxClient(rowData);
+  } catch (e) {}
+  const guestPaxVal = (actPax > 0) ? String(actPax) : (booking?.pax ? String(booking.pax) : '');
+  const roomPaxVal = getFieldVal('ROOM_PAX', ['ROOM PAX'], 26);
+
+  document.getElementById('edit-field-guestpax').value = guestPaxVal || roomPaxVal || '';
+  document.getElementById('edit-field-roompax').value = roomPaxVal || guestPaxVal || '';
+
+  // Financials
+  document.getElementById('edit-field-total').value = getFieldVal('TOTAL AMOUNT', ['TOTAL'], 18);
+  document.getElementById('edit-field-deposit').value = getFieldVal('DEPOSIT', [], 19);
+  document.getElementById('edit-field-balance').value = getFieldVal('BALANCE', [], 20);
+  document.getElementById('edit-field-status').value = getFieldVal('STATUS', [], 21);
+
+  // Special Request & Remarks
+  document.getElementById('edit-field-special-request').value = getFieldVal('SPECIAL REQUEST', ['SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'], 13);
+  document.getElementById('edit-field-remark').value = getFieldVal('REMARK', ['REMARKS'], 22);
 
   const banner = document.getElementById('edit-override-banner');
   if (banner) {
@@ -2493,18 +2531,24 @@ async function saveBookingEdit(event) {
   const fields = {
     'NAME': document.getElementById('edit-field-name').value.trim(),
     'CODE': document.getElementById('edit-field-code').value.trim(),
+    'PIC': document.getElementById('edit-field-pic').value.trim(),
     'CHECK IN': document.getElementById('edit-field-checkin').value.trim(),
     'CHECK OUT': document.getElementById('edit-field-checkout').value.trim(),
+    'STAYING DAYS': document.getElementById('edit-field-staying-days').value.trim(),
     'SNORKELING': document.getElementById('edit-field-snorkeling').value.trim(),
     'SNORKELLING': document.getElementById('edit-field-snorkeling').value.trim(),
     'DIVING': document.getElementById('edit-field-diving').value.trim(),
     'COURSE': document.getElementById('edit-field-course').value.trim(),
     'ROOM': document.getElementById('edit-field-room').value.trim(),
+    'ROOM TYPE': document.getElementById('edit-field-roomtype').value.trim(),
+    'ROOM_TYPE': document.getElementById('edit-field-roomtype').value.trim(),
+    'GUEST_PAX': document.getElementById('edit-field-guestpax').value.trim(),
     'ROOM_PAX': document.getElementById('edit-field-roompax').value.trim(),
     'TOTAL AMOUNT': document.getElementById('edit-field-total').value.trim(),
     'DEPOSIT': document.getElementById('edit-field-deposit').value.trim(),
     'BALANCE': document.getElementById('edit-field-balance').value.trim(),
     'STATUS': document.getElementById('edit-field-status').value.trim(),
+    'SPECIAL REQUEST': document.getElementById('edit-field-special-request').value.trim(),
     'REMARK': document.getElementById('edit-field-remark').value.trim()
   };
 
