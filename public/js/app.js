@@ -890,9 +890,22 @@ function renderContent() {
         }
 
         if (monthFilterVal !== '') {
+          const targetMonth = parseInt(monthFilterVal, 10);
           const checkInDate = parseClientDate(checkInStr);
-          const monthMatches = checkInDate && checkInDate.getMonth() === parseInt(monthFilterVal, 10);
-          if (!monthMatches) return false;
+          const checkOutDate = parseClientDate(checkOutStr);
+
+          const checkInMatches = checkInDate && checkInDate.getMonth() === targetMonth;
+          const checkOutMatches = checkOutDate && checkOutDate.getMonth() === targetMonth;
+
+          let spansMonth = false;
+          if (checkInDate && checkOutDate) {
+            const year = checkInDate.getFullYear();
+            const startOfMonth = new Date(year, targetMonth, 1, 0, 0, 0, 0);
+            const endOfMonth = new Date(year, targetMonth + 1, 0, 23, 59, 59, 999);
+            spansMonth = (checkInDate <= endOfMonth && checkOutDate >= startOfMonth);
+          }
+
+          if (!checkInMatches && !checkOutMatches && !spansMonth) return false;
         }
 
         return true;

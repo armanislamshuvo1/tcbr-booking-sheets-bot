@@ -117,13 +117,52 @@ function parseDate(value) {
 }
 
 /**
- * Check if a date falls within the current month & year.
+ * Check if a date falls within the target month & year (defaults to current month & year).
+ * @param {Date} date - Date object to check
+ * @param {Date} [referenceDate] - Optional reference date to compare against (defaults to now)
  */
-function isCurrentMonth(date) {
-  if (!date) return false;
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() &&
-         date.getMonth()    === now.getMonth();
+function isCurrentMonth(date, referenceDate = new Date()) {
+  if (!date || isNaN(date.getTime())) return false;
+  return date.getFullYear() === referenceDate.getFullYear() &&
+         date.getMonth()    === referenceDate.getMonth();
+}
+
+/**
+ * Check if a booking falls within or overlaps with the target month (defaults to current month).
+ * A booking qualifies if:
+ * 1. Check-in date is in the month, OR
+ * 2. Check-out date is in the month (e.g. 30 Aug to 2nd Sept departing in Sept), OR
+ * 3. The stay interval spans across the month (checkIn <= endOfMonth && checkOut >= startOfMonth).
+ * 
+ * @param {Date|null} checkIn - Parsed check-in date
+ * @param {Date|null} checkOut - Parsed check-out date
+ * @param {Date} [referenceDate] - Optional reference date (defaults to now)
+ */
+function isBookingInCurrentMonth(checkIn, checkOut, referenceDate = new Date()) {
+  const validCheckIn = (checkIn && !isNaN(checkIn.getTime())) ? checkIn : null;
+  const validCheckOut = (checkOut && !isNaN(checkOut.getTime())) ? checkOut : null;
+
+  if (!validCheckIn && !validCheckOut) return false;
+
+  // 1. Check-in falls in the month
+  if (validCheckIn && isCurrentMonth(validCheckIn, referenceDate)) return true;
+
+  // 2. Check-out falls in the month (e.g. cross-month stays departing this month)
+  if (validCheckOut && isCurrentMonth(validCheckOut, referenceDate)) return true;
+
+  // 3. Stay spans across the month
+  if (validCheckIn && validCheckOut) {
+    const year = referenceDate.getFullYear();
+    const month = referenceDate.getMonth();
+    const startOfMonth = new Date(year, month, 1, 0, 0, 0, 0);
+    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+    if (validCheckIn <= endOfMonth && validCheckOut >= startOfMonth) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -154,19 +193,20 @@ function findHeaderRowIndex(rows) {
 
 /**
  * Build a map of { rowKey -> { row, checkIn, checkOut, rowIndex } }
- * for all rows that belong to the current month.
+ * for all rows that belong to or overlap with the current month.
  */
-function buildCurrentMonthMap(rows) {
+function buildCurrentMonthMap(rows, referenceDate = new Date()) {
   const map = {};
   const headerIndex = findHeaderRowIndex(rows);
 
   // Skip header row
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
+    if (!row) continue;
     const checkIn  = parseDate(row[CHECK_IN_COL]);
     const checkOut = parseDate(row[CHECK_OUT_COL]);
 
-    if (isCurrentMonth(checkIn)) {
+    if (isBookingInCurrentMonth(checkIn, checkOut, referenceDate)) {
       const key = rowKey(row, i);
       map[key] = { row, checkIn, checkOut, rowIndex: i };
     }
@@ -261,4 +301,4 @@ function getStayDays(checkInStr, checkOutStr) {
   return days;
 }
 
-module.exports = { detectChanges, buildCurrentMonthMap, parseDate, isCurrentMonth, rowKey, findHeaderRowIndex, getMonthNameFromText, getMonthIndexFromText, getStayDays };
+module.exports = { detectChanges, buildCurrentMonthMap, parseDate, isCurrentMonth, isBookingInCurrentMonth, rowKey, findHeaderRowIndex, getMonthNameFromText, getMonthIndexFromText, getStayDays };
