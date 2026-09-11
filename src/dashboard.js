@@ -10,6 +10,7 @@ const {
   revokeToken, 
   requireAuth, 
   requireAdmin,
+  requireRole,
   setAuthCookie,
   clearAuthCookie,
   loginRateLimiter,
@@ -82,8 +83,8 @@ app.post('/api/auth/change-password', requireAuth, admin.changePassword);
 
 // ─── Data & Operational APIs (Protected by requireAuth) ───────────────────────
 
-// Fetch change history
-app.get('/api/history', requireAuth, async (req, res) => {
+// Fetch change history (Admin & Operator only)
+app.get('/api/history', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   const history = await loadHistory();
   res.json(history);
 });
@@ -104,7 +105,7 @@ app.get('/api/status', async (req, res) => {
   });
 });
 
-// Current month's active bookings
+// Current month's active bookings (Accessible to Admin, Operator, and Jetty Staff)
 app.get('/api/current-bookings', requireAuth, async (req, res) => {
   try {
     const snapshot = await loadSnapshot();
@@ -118,9 +119,41 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
     }));
     const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
 
+    const headers = snapshot.headers || [];
+    let sanitizedHeaders = [...headers];
+    let sanitizedBookings = bookings;
+
+    // RBAC: For jetty_staff, sanitize financial columns (Total Amount, Deposit, Balance, Status)
+    if (req.user && req.user.role === 'jetty_staff') {
+      const financialKeywords = ['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'];
+      const hiddenIndices = new Set();
+
+      sanitizedHeaders = headers.map((h, idx) => {
+        const upper = (h || '').toString().trim().toUpperCase();
+        if (financialKeywords.includes(upper)) {
+          hiddenIndices.add(idx);
+          return '';
+        }
+        return h;
+      });
+
+      sanitizedBookings = bookings.map(b => {
+        const row = Array.isArray(b.row) ? [...b.row] : [];
+        hiddenIndices.forEach(idx => {
+          if (idx < row.length) {
+            row[idx] = '';
+          }
+        });
+        return {
+          ...b,
+          row
+        };
+      });
+    }
+
     res.json({
-      headers: snapshot.headers || [],
-      bookings,
+      headers: sanitizedHeaders,
+      bookings: sanitizedBookings,
     });
   } catch (err) {
     console.error('   ❌ Failed to load current bookings:', err.message);
@@ -128,8 +161,8 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
   }
 });
 
-// All bookings from Google Sheet snapshot
-app.get('/api/all-bookings', requireAuth, async (req, res) => {
+// All bookings from Google Sheet snapshot (Admin & Operator only)
+app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   try {
     const snapshot = await loadSnapshot();
     if (!snapshot) {
@@ -192,8 +225,8 @@ function getRowActivityPax(row) {
   return (s.a + s.c + s.b) + (d.a + d.c + d.b) + (c.a + c.c + c.b);
 }
 
-// Fetch in-house guest stats for a specific date
-app.get('/api/in-house', requireAuth, async (req, res) => {
+// Fetch in-house guest stats for a specific date (Admin & Operator only)
+app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   try {
     const snapshot = await loadSnapshot();
     if (!snapshot || !snapshot.allRows) {
@@ -328,8 +361,8 @@ app.get('/api/in-house', requireAuth, async (req, res) => {
   }
 });
 
-// Trigger manual check
-app.post('/api/check', requireAuth, async (req, res) => {
+// Trigger manual check (Admin & Operator only)
+app.post('/api/check', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   try {
     if (runCheckCallback) {
       await runCheckCallback(false, true);
@@ -343,8 +376,8 @@ app.post('/api/check', requireAuth, async (req, res) => {
   }
 });
 
-// Acknowledge event
-app.post('/api/history/acknowledge', requireAuth, async (req, res) => {
+// Acknowledge event (Admin & Operator only)
+app.post('/api/history/acknowledge', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   try {
     const { id, user, category } = req.body;
     if (!id) {
@@ -364,15 +397,16 @@ app.post('/api/history/acknowledge', requireAuth, async (req, res) => {
   }
 });
 
-// Internal notes endpoints
-app.post('/api/notes', requireAuth, admin.createInternalNote);
-app.get('/api/notes', requireAuth, admin.fetchInternalNotes);
+// Internal notes endpoints (Admin & Operator only)
+app.post('/api/notes', requireAuth, requireRole('admin', 'operator'), admin.createInternalNote);
+app.get('/api/notes', requireAuth, requireRole('admin', 'operator'), admin.fetchInternalNotes);
 
 // ─── Admin Portal APIs (Protected by requireAuth & requireAdmin) ───────────────
 
 app.get('/api/admin/users', requireAuth, requireAdmin, admin.getUsers);
 app.post('/api/admin/users', requireAuth, requireAdmin, admin.createUser);
 app.post('/api/admin/users/:userId/approve', requireAuth, requireAdmin, admin.approveUser);
+app.put('/api/admin/users/:userId/role', requireAuth, requireAdmin, admin.updateUserRole);
 app.delete('/api/admin/users/:userId', requireAuth, requireAdmin, admin.deleteUser);
 
 app.get('/manifest.json', async (req, res) => {
@@ -432,4 +466,4 @@ async function startDashboard(runCheckFn) {
   });
 }
 
-module.exports = { startDashboard };
+module.exports = { startDashboard, app };

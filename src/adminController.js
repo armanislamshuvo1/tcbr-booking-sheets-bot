@@ -66,12 +66,15 @@ async function createUser(req, res) {
       return res.status(400).json({ error: `Username "${cleanUsername}" is already taken.` });
     }
 
+    const validRoles = ['admin', 'operator', 'jetty_staff'];
+    const assignedRole = validRoles.includes(role) ? role : 'operator';
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = {
       id: crypto.randomUUID(),
       username: cleanUsername,
       displayName: displayName || cleanUsername,
-      role: role === 'admin' ? 'admin' : 'operator',
+      role: assignedRole,
       approved: true, // Created directly by Admin
       password: hashedPassword,
       createdAt: new Date().toISOString()
@@ -106,11 +109,12 @@ async function createUser(req, res) {
 }
 
 /**
- * Approve a pending user account
+ * Approve a pending user account (optionally assigning a role)
  */
 async function approveUser(req, res) {
   try {
     const { userId } = req.params;
+    const { role } = req.body || {};
     const users = await loadUsers();
     const user = users.find(u => u.id === userId);
 
@@ -119,17 +123,75 @@ async function approveUser(req, res) {
     }
 
     user.approved = true;
+    if (role && ['admin', 'operator', 'jetty_staff'].includes(role)) {
+      user.role = role;
+    }
     await saveUsers(users);
 
     await appendAuditLog({
       action: 'USER_APPROVED',
       username: req.user.username,
       role: req.user.role,
-      details: `Approved account for user: ${user.username}`,
+      details: `Approved account for user: ${user.username} (Role: ${user.role})`,
       ip: req.ip
     });
 
     res.json({ success: true, message: `Account for ${user.username} has been approved.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * Update a user's role (Admin only)
+ */
+async function updateUserRole(req, res) {
+  try {
+    const { userId } = req.params;
+    const { role } = req.body || {};
+    const validRoles = ['admin', 'operator', 'jetty_staff'];
+
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: `Invalid role. Allowed roles: ${validRoles.join(', ')}.` });
+    }
+
+    let users = await loadUsers();
+    const targetUser = users.find(u => u.id === userId);
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Prevent self-demoting the active admin if they are the only admin or seed admin
+    if (userId === req.user.id && role !== 'admin') {
+      const adminCount = users.filter(u => u.role === 'admin' && u.approved !== false).length;
+      if (adminCount <= 1 || targetUser.isSeed) {
+        return res.status(400).json({ error: 'Cannot demote the primary or sole administrator account.' });
+      }
+    }
+
+    const oldRole = targetUser.role;
+    targetUser.role = role;
+    await saveUsers(users);
+
+    await appendAuditLog({
+      action: 'USER_ROLE_UPDATED',
+      username: req.user.username,
+      role: req.user.role,
+      details: `Changed role for user "${targetUser.username}" from ${oldRole} to ${role}`,
+      ip: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: `Role for ${targetUser.username} updated to ${role}.`,
+      user: {
+        id: targetUser.id,
+        username: targetUser.username,
+        displayName: targetUser.displayName,
+        role: targetUser.role
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -897,6 +959,7 @@ module.exports = {
   getUsers,
   createUser,
   approveUser,
+  updateUserRole,
   deleteUser,
   changePassword,
   getBotSettings,

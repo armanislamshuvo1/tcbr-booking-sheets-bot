@@ -178,11 +178,13 @@ function applyDashboardData(data) {
 // ── Load data from API with localStorage caching ────────────────────────────
 async function loadData(forceRefresh = false) {
   const btn = document.getElementById('refresh-btn');
+  const isJetty = currentUser && currentUser.role === 'jetty_staff';
+  const roleCacheKey = `${DASHBOARD_CACHE_KEY}_${currentUser?.role || 'anon'}`;
 
   // Check localStorage cache first if not a forced refresh
   if (!forceRefresh) {
     try {
-      const cachedRaw = localStorage.getItem(DASHBOARD_CACHE_KEY);
+      const cachedRaw = localStorage.getItem(roleCacheKey);
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw);
         const age = Date.now() - (cached.timestamp || 0);
@@ -201,17 +203,32 @@ async function loadData(forceRefresh = false) {
 
   try {
     const ts = forceRefresh ? `?_t=${Date.now()}` : '';
-    const [historyRes, statusRes, currentBookingsRes, allBookingsRes] = await Promise.all([
-      authFetch(`/api/history${ts}`),
-      authFetch(`/api/status${ts}`),
-      authFetch(`/api/current-bookings${ts}`),
-      authFetch(`/api/all-bookings${ts}`),
-    ]);
+    let history = [];
+    let status = {};
+    let currentBookingsData = { headers: [], bookings: [] };
+    let allBookingsData = { headers: [], bookings: [] };
 
-    const history = await historyRes.json();
-    const status = await statusRes.json();
-    const currentBookingsData = await currentBookingsRes.json();
-    const allBookingsData = await allBookingsRes.json();
+    if (isJetty) {
+      // Jetty staff only loads current bookings & status (avoids forbidden 403 endpoints)
+      const [statusRes, currentBookingsRes] = await Promise.all([
+        authFetch(`/api/status${ts}`),
+        authFetch(`/api/current-bookings${ts}`),
+      ]);
+      status = await statusRes.json();
+      currentBookingsData = await currentBookingsRes.json();
+    } else {
+      // Admin & Operator load full history and all bookings
+      const [historyRes, statusRes, currentBookingsRes, allBookingsRes] = await Promise.all([
+        authFetch(`/api/history${ts}`),
+        authFetch(`/api/status${ts}`),
+        authFetch(`/api/current-bookings${ts}`),
+        authFetch(`/api/all-bookings${ts}`),
+      ]);
+      history = await historyRes.json();
+      status = await statusRes.json();
+      currentBookingsData = await currentBookingsRes.json();
+      allBookingsData = await allBookingsRes.json();
+    }
 
     const freshCache = {
       timestamp: Date.now(),
@@ -222,7 +239,7 @@ async function loadData(forceRefresh = false) {
     };
 
     try {
-      localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(freshCache));
+      localStorage.setItem(roleCacheKey, JSON.stringify(freshCache));
     } catch (e) {
       console.warn('Failed to save dashboard cache to localStorage:', e);
     }
@@ -238,6 +255,17 @@ async function loadData(forceRefresh = false) {
 
 // ── Update stat cards ───────────────────────────────────────────────────────
 function updateStats(status) {
+  const isJetty = currentUser && currentUser.role === 'jetty_staff';
+  const statTotalEl = document.getElementById('stat-total');
+  const statNewEl = document.getElementById('stat-new');
+  const statModEl = document.getElementById('stat-modified');
+  const statErrEl = document.getElementById('stat-errors');
+
+  if (isJetty) {
+    if (statTotalEl) statTotalEl.textContent = currentBookings.length;
+    return;
+  }
+
   let newCount = 0, modCount = 0, errCount = 0;
   for (const event of allHistory) {
     if (event.error) { errCount++; continue; }
@@ -245,10 +273,6 @@ function updateStats(status) {
     modCount += (event.modifiedRows || []).length;
   }
   const totalChecks = (status && typeof status.totalChecks !== 'undefined') ? status.totalChecks : allHistory.length;
-  const statTotalEl = document.getElementById('stat-total');
-  const statNewEl = document.getElementById('stat-new');
-  const statModEl = document.getElementById('stat-modified');
-  const statErrEl = document.getElementById('stat-errors');
 
   if (statTotalEl) statTotalEl.textContent = totalChecks;
   if (statNewEl) statNewEl.textContent = newCount;
@@ -258,6 +282,10 @@ function updateStats(status) {
 
 // ── Tab switcher ────────────────────────────────────────────────────────────
 function setTab(tabName) {
+  // Enforce Jetty Staff role constraint: can ONLY view 'bookings'
+  if (currentUser && currentUser.role === 'jetty_staff' && tabName !== 'bookings') {
+    tabName = 'bookings';
+  }
   activeTab = tabName;
   
   // Update active tab buttons
@@ -680,8 +708,12 @@ function updateInHouseStats(targetDate) {
   if (statInhouseSubEl) statInhouseSubEl.textContent = `${totalBookingsInHouse} booking${totalBookingsInHouse !== 1 ? 's' : ''} (${dateLabel})`;
   
   if (inHouseBadgeEl) {
-    inHouseBadgeEl.textContent = `🏠 ${totalPax} In-House Guests (${dateLabel})`;
-    inHouseBadgeEl.style.display = (activeTab === 'bookings' || activeTab === 'allbookings') ? 'inline-flex' : 'none';
+    if (currentUser && currentUser.role === 'jetty_staff') {
+      inHouseBadgeEl.style.display = 'none';
+    } else {
+      inHouseBadgeEl.textContent = `🏠 ${totalPax} In-House Guests (${dateLabel})`;
+      inHouseBadgeEl.style.display = (activeTab === 'bookings' || activeTab === 'allbookings') ? 'inline-flex' : 'none';
+    }
   }
 }
 
@@ -1296,6 +1328,25 @@ function buildBookingCard(booking, idx) {
     { key: 'REMARK', val: remarkVal },
   ];
 
+  // RBAC: Operator and Admin will see all details (including financials)
+  const isPrivileged = currentUser && (currentUser.role === 'admin' || currentUser.role === 'operator');
+  if (isPrivileged) {
+    const totalIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'TOTAL AMOUNT');
+    const depositIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'DEPOSIT');
+    const balanceIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'BALANCE');
+    const statusIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'STATUS');
+
+    const totalVal = totalIdx !== -1 ? rowData[totalIdx] : (rowData[18] || '');
+    const depositVal = depositIdx !== -1 ? rowData[depositIdx] : (rowData[19] || '');
+    const balanceVal = balanceIdx !== -1 ? rowData[balanceIdx] : (rowData[20] || '');
+    const statusVal = statusIdx !== -1 ? rowData[statusIdx] : (rowData[21] || '');
+
+    if (totalVal) fields.push({ key: 'TOTAL AMOUNT', val: totalVal });
+    if (depositVal) fields.push({ key: 'DEPOSIT', val: depositVal });
+    if (balanceVal) fields.push({ key: 'BALANCE', val: balanceVal });
+    if (statusVal) fields.push({ key: 'PAYMENT STATUS', val: statusVal });
+  }
+
   const rows = fields
     .map(f => {
       const val = (f.val || '').toString().trim();
@@ -1811,23 +1862,82 @@ function setupUserUI(user) {
   const nameLabel = document.getElementById('user-display-name');
   const adminBtn = document.getElementById('admin-portal-btn');
   const logoutBtn = document.getElementById('logout-btn');
+  const triggerBtn = document.getElementById('trigger-btn');
+  const tabChangelog = document.getElementById('tab-changelog');
+  const tabBookings = document.getElementById('tab-bookings');
+  const tabInhouse = document.getElementById('tab-inhouse');
+  const tabAllBookings = document.getElementById('tab-allbookings');
 
   if (badge) badge.style.display = 'flex';
   if (logoutBtn) logoutBtn.style.display = 'inline-flex';
 
+  const userRole = (user && user.role) ? user.role : 'operator';
+
   if (roleTag) {
-    roleTag.textContent = (user.role || 'OPERATOR').toUpperCase();
-    if (user.role === 'admin') {
+    if (userRole === 'admin') {
+      roleTag.textContent = 'ADMIN';
       roleTag.style.background = 'var(--red-bg)';
       roleTag.style.color = 'var(--red)';
+      roleTag.style.border = '1px solid rgba(248,81,73,0.3)';
+    } else if (userRole === 'jetty_staff') {
+      roleTag.textContent = 'JETTY STAFF';
+      roleTag.style.background = 'rgba(45, 212, 191, 0.15)';
+      roleTag.style.color = '#2dd4bf';
+      roleTag.style.border = '1px solid rgba(45, 212, 191, 0.4)';
     } else {
+      roleTag.textContent = 'OPERATOR';
       roleTag.style.background = 'var(--accent-glow)';
       roleTag.style.color = 'var(--accent)';
+      roleTag.style.border = '1px solid rgba(88, 166, 255, 0.3)';
     }
   }
 
   if (nameLabel) nameLabel.textContent = user.displayName || user.username;
-  if (adminBtn) adminBtn.style.display = user.role === 'admin' ? 'inline-flex' : 'none';
+  if (adminBtn) adminBtn.style.display = userRole === 'admin' ? 'inline-flex' : 'none';
+
+  // Role-based visibility for Tabs, Actions & Stat Cards
+  const statsGrid = document.querySelector('.stats-grid');
+  if (userRole === 'jetty_staff') {
+    if (tabChangelog) tabChangelog.style.display = 'none';
+    if (tabInhouse) tabInhouse.style.display = 'none';
+    if (tabAllBookings) tabAllBookings.style.display = 'none';
+    if (triggerBtn) triggerBtn.style.display = 'none';
+
+    // Hide Change Log category filter bar
+    const filterBar = document.getElementById('category-filters');
+    if (filterBar) filterBar.style.display = 'none';
+
+    // Hide top stat cards blocks completely for jetty staff
+    if (statsGrid) statsGrid.style.display = 'none';
+
+    // Default to Current Bookings tab
+    if (activeTab !== 'bookings') {
+      setTab('bookings');
+    }
+  } else {
+    // Admin and Operator see all tabs and full controls
+    if (tabChangelog) tabChangelog.style.display = '';
+    if (tabInhouse) tabInhouse.style.display = '';
+    if (tabAllBookings) tabAllBookings.style.display = '';
+    if (triggerBtn) triggerBtn.style.display = 'inline-flex';
+
+    if (statsGrid) statsGrid.style.display = '';
+
+    const statNewCard = document.getElementById('stat-new')?.closest('.stat-card');
+    const statModCard = document.getElementById('stat-modified')?.closest('.stat-card');
+    const statErrCard = document.getElementById('stat-errors')?.closest('.stat-card');
+    if (statNewCard) statNewCard.style.display = '';
+    if (statModCard) statModCard.style.display = '';
+    if (statErrCard) statErrCard.style.display = '';
+
+    const statTotalCard = document.getElementById('stat-total')?.closest('.stat-card');
+    if (statTotalCard) {
+      const lbl = statTotalCard.querySelector('.stat-label');
+      const sub = statTotalCard.querySelector('.stat-sub');
+      if (lbl) lbl.textContent = 'Total Checks';
+      if (sub) sub.textContent = 'Since bot started';
+    }
+  }
 }
 
 async function logoutUser() {
@@ -1904,12 +2014,17 @@ async function loadAdminUsers() {
     pendingUsers.forEach(u => {
       pendingHtml += `
         <tr style="border-bottom: 1px solid var(--border-light); background: rgba(210,153,34,0.03);">
-          <td style="padding: 10px; font-weight: 600;">${u.username}</td>
-          <td style="padding: 10px; color: var(--text-primary);">${u.displayName || '—'}</td>
+          <td style="padding: 10px; font-weight: 600;">${escapeHtml(u.username)}</td>
+          <td style="padding: 10px; color: var(--text-primary);">${escapeHtml(u.displayName || '—')}</td>
           <td style="padding: 10px; font-size:0.78rem; color: var(--text-muted);">${new Date(u.createdAt).toLocaleDateString()}</td>
-          <td style="padding: 10px; text-align: right; display: flex; gap: 6px; justify-content: flex-end;">
-            <button class="action-btn" onclick="approveUserAccount('${u.id}', '${u.username}')" style="background:var(--green-bg); color:var(--green); border-color:rgba(63,185,80,0.3); font-size:0.78rem; padding:5px 10px; font-weight:600;">✓ Approve</button>
-            <button class="action-btn" onclick="deleteUserAccount('${u.id}', '${u.username}')" style="background:var(--red-bg); color:var(--red); border-color:rgba(248,81,73,0.3); font-size:0.75rem; padding:4px 8px;">Reject</button>
+          <td style="padding: 10px; text-align: right; display: flex; gap: 6px; justify-content: flex-end; align-items: center;">
+            <select id="pending-role-${u.id}" class="search-input-field" style="padding: 4px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary);">
+              <option value="operator" selected>Operator</option>
+              <option value="jetty_staff">Jetty Staff</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button class="action-btn" onclick="approveUserAccount('${u.id}', '${escapeHtml(u.username)}')" style="background:var(--green-bg); color:var(--green); border-color:rgba(63,185,80,0.3); font-size:0.78rem; padding:5px 10px; font-weight:600;">✓ Approve</button>
+            <button class="action-btn" onclick="deleteUserAccount('${u.id}', '${escapeHtml(u.username)}')" style="background:var(--red-bg); color:var(--red); border-color:rgba(248,81,73,0.3); font-size:0.75rem; padding:4px 8px;">Reject</button>
           </td>
         </tr>
       `;
@@ -1920,14 +2035,30 @@ async function loadAdminUsers() {
     let activeHtml = '';
     activeUsers.forEach(u => {
       const isSelf = u.id === currentUser.id;
+      let roleHtml = '';
+      if (isSelf || u.isSeed) {
+        let badgeStyle = 'background:var(--accent-glow);color:var(--accent);';
+        if (u.role === 'admin') badgeStyle = 'background:var(--red-bg);color:var(--red);';
+        if (u.role === 'jetty_staff') badgeStyle = 'background:rgba(45,212,191,0.15);color:#2dd4bf;';
+        roleHtml = `<span class="badge" style="font-size:0.7rem; text-transform:uppercase; ${badgeStyle}">${escapeHtml(u.role)}</span>`;
+      } else {
+        roleHtml = `
+          <select class="search-input-field" onchange="changeUserRole('${u.id}', this.value, '${escapeHtml(u.username)}')" style="padding: 3px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); cursor: pointer;">
+            <option value="operator" ${u.role === 'operator' ? 'selected' : ''}>Operator</option>
+            <option value="jetty_staff" ${u.role === 'jetty_staff' ? 'selected' : ''}>Jetty Staff</option>
+            <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+          </select>
+        `;
+      }
+
       activeHtml += `
         <tr style="border-bottom: 1px solid var(--border-light);">
-          <td style="padding: 10px; font-weight: 600;">${u.username} ${u.isSeed ? '<span class="badge" style="font-size:0.65rem;">SEED</span>' : ''}</td>
-          <td style="padding: 10px; color: var(--text-secondary);">${u.displayName || '—'}</td>
-          <td style="padding: 10px;"><span class="badge" style="font-size:0.7rem; text-transform:uppercase;">${u.role}</span></td>
+          <td style="padding: 10px; font-weight: 600;">${escapeHtml(u.username)} ${u.isSeed ? '<span class="badge" style="font-size:0.65rem;">SEED</span>' : ''}</td>
+          <td style="padding: 10px; color: var(--text-secondary);">${escapeHtml(u.displayName || '—')}</td>
+          <td style="padding: 10px;">${roleHtml}</td>
           <td style="padding: 10px; font-size:0.78rem; color: var(--text-muted);">${new Date(u.createdAt).toLocaleDateString()}</td>
           <td style="padding: 10px; text-align: right;">
-            ${isSelf ? '<span style="font-size:0.75rem; color:var(--text-muted);">Active Session</span>' : `<button class="action-btn" onclick="deleteUserAccount('${u.id}', '${u.username}')" style="background:var(--red-bg); color:var(--red); border-color:rgba(248,81,73,0.3); font-size:0.75rem; padding:4px 8px;">Delete</button>`}
+            ${isSelf ? '<span style="font-size:0.75rem; color:var(--text-muted);">Active Session</span>' : `<button class="action-btn" onclick="deleteUserAccount('${u.id}', '${escapeHtml(u.username)}')" style="background:var(--red-bg); color:var(--red); border-color:rgba(248,81,73,0.3); font-size:0.75rem; padding:4px 8px;">Delete</button>`}
           </td>
         </tr>
       `;
@@ -1940,17 +2071,44 @@ async function loadAdminUsers() {
 }
 
 async function approveUserAccount(userId, username) {
+  const roleSelect = document.getElementById(`pending-role-${userId}`);
+  const role = roleSelect ? roleSelect.value : 'operator';
   try {
-    const res = await authFetch(`/api/admin/users/${userId}/approve`, { method: 'POST' });
+    const res = await authFetch(`/api/admin/users/${userId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role })
+    });
     const data = await res.json();
     if (res.ok && data.success) {
-      showToast(`✅ Approved account for ${username}`);
+      showToast(`✅ Approved account for ${username} (${role})`);
       loadAdminUsers();
     } else {
       showToast(`❌ ${data.error || 'Approval failed'}`);
     }
   } catch {
     showToast('❌ Network error approving user account.');
+  }
+}
+
+async function changeUserRole(userId, newRole, username) {
+  try {
+    const res = await authFetch(`/api/admin/users/${userId}/role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: newRole })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`✅ Role for ${username} changed to ${newRole}`);
+      loadAdminUsers();
+    } else {
+      showToast(`❌ ${data.error || 'Failed to update role'}`);
+      loadAdminUsers();
+    }
+  } catch {
+    showToast('❌ Network error updating role.');
+    loadAdminUsers();
   }
 }
 

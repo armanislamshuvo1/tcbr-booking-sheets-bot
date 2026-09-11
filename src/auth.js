@@ -349,14 +349,24 @@ function requireAuth(req, res, next) {
 }
 
 /**
+ * Express Middleware Factory: Require Specific Role(s)
+ * e.g. requireRole('admin', 'operator')
+ */
+function requireRole(...allowedRoles) {
+  return function roleMiddleware(req, res, next) {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        error: `Forbidden. Insufficient permissions. Required role: ${allowedRoles.join(' or ')}.` 
+      });
+    }
+    next();
+  };
+}
+
+/**
  * Express Middleware: Require Admin Role
  */
-function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden. Administrator privileges required.' });
-  }
-  next();
-}
+const requireAdmin = requireRole('admin');
 
 /**
  * Set HttpOnly cookie for session token.
@@ -448,6 +458,7 @@ module.exports = {
   revokeToken,
   requireAuth,
   requireAdmin,
+  requireRole,
   setAuthCookie,
   clearAuthCookie,
   loginRateLimiter,
