@@ -1328,9 +1328,9 @@ function buildBookingCard(booking, idx) {
     { key: 'REMARK', val: remarkVal },
   ];
 
-  // RBAC: Operator and Admin will see all details (including financials)
-  const isPrivileged = currentUser && (currentUser.role === 'admin' || currentUser.role === 'operator');
-  if (isPrivileged) {
+  // RBAC: ONLY Admin will see payment details (hidden from operator and jetty_staff)
+  const canSeePayments = currentUser && currentUser.role === 'admin';
+  if (canSeePayments) {
     const totalIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'TOTAL AMOUNT');
     const depositIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'DEPOSIT');
     const balanceIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'BALANCE');

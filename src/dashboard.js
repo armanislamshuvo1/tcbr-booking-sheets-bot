@@ -86,6 +86,46 @@ app.post('/api/auth/change-password', requireAuth, admin.changePassword);
 // Fetch change history (Admin & Operator only)
 app.get('/api/history', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
   const history = await loadHistory();
+  if (req.user && req.user.role !== 'admin') {
+    const financialKeywords = ['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'];
+    const sanitizedHistory = history.map(ev => {
+      const newRows = (ev.newRows || []).map(item => {
+        if (!item || !item.headers || !item.row) return item;
+        const hiddenIndices = new Set();
+        const headers = item.headers.map((h, idx) => {
+          if (financialKeywords.includes((h || '').toString().trim().toUpperCase())) {
+            hiddenIndices.add(idx);
+            return '';
+          }
+          return h;
+        });
+        const row = item.row.map((cell, idx) => hiddenIndices.has(idx) ? '' : cell);
+        return { ...item, headers, row };
+      });
+
+      const modifiedRows = (ev.modifiedRows || []).map(item => {
+        if (!item) return item;
+        const changes = (item.changes || []).filter(c => !financialKeywords.includes((c.column || '').toString().trim().toUpperCase()));
+        let headers = item.headers;
+        let row = item.row;
+        if (headers && row) {
+          const hiddenIndices = new Set();
+          headers = headers.map((h, idx) => {
+            if (financialKeywords.includes((h || '').toString().trim().toUpperCase())) {
+              hiddenIndices.add(idx);
+              return '';
+            }
+            return h;
+          });
+          row = row.map((cell, idx) => hiddenIndices.has(idx) ? '' : cell);
+        }
+        return { ...item, changes, headers, row };
+      });
+
+      return { ...ev, newRows, modifiedRows };
+    });
+    return res.json(sanitizedHistory);
+  }
   res.json(history);
 });
 
@@ -105,6 +145,35 @@ app.get('/api/status', async (req, res) => {
   });
 });
 
+function sanitizeFinancials(headers, bookings) {
+  const financialKeywords = ['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'];
+  const hiddenIndices = new Set();
+
+  const sanitizedHeaders = (headers || []).map((h, idx) => {
+    const upper = (h || '').toString().trim().toUpperCase();
+    if (financialKeywords.includes(upper)) {
+      hiddenIndices.add(idx);
+      return '';
+    }
+    return h;
+  });
+
+  const sanitizedBookings = (bookings || []).map(b => {
+    const row = Array.isArray(b.row) ? [...b.row] : [];
+    hiddenIndices.forEach(idx => {
+      if (idx < row.length) {
+        row[idx] = '';
+      }
+    });
+    return {
+      ...b,
+      row
+    };
+  });
+
+  return { headers: sanitizedHeaders, bookings: sanitizedBookings };
+}
+
 // Current month's active bookings (Accessible to Admin, Operator, and Jetty Staff)
 app.get('/api/current-bookings', requireAuth, async (req, res) => {
   try {
@@ -119,41 +188,15 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
     }));
     const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
 
-    const headers = snapshot.headers || [];
-    let sanitizedHeaders = [...headers];
-    let sanitizedBookings = bookings;
-
-    // RBAC: For jetty_staff, sanitize financial columns (Total Amount, Deposit, Balance, Status)
-    if (req.user && req.user.role === 'jetty_staff') {
-      const financialKeywords = ['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'];
-      const hiddenIndices = new Set();
-
-      sanitizedHeaders = headers.map((h, idx) => {
-        const upper = (h || '').toString().trim().toUpperCase();
-        if (financialKeywords.includes(upper)) {
-          hiddenIndices.add(idx);
-          return '';
-        }
-        return h;
-      });
-
-      sanitizedBookings = bookings.map(b => {
-        const row = Array.isArray(b.row) ? [...b.row] : [];
-        hiddenIndices.forEach(idx => {
-          if (idx < row.length) {
-            row[idx] = '';
-          }
-        });
-        return {
-          ...b,
-          row
-        };
-      });
+    // RBAC: ONLY admin can see payment/financial details. For operator and jetty_staff, sanitize them out.
+    if (req.user && req.user.role !== 'admin') {
+      const sanitized = sanitizeFinancials(snapshot.headers || [], bookings);
+      return res.json(sanitized);
     }
 
     res.json({
-      headers: sanitizedHeaders,
-      bookings: sanitizedBookings,
+      headers: snapshot.headers || [],
+      bookings,
     });
   } catch (err) {
     console.error('   ❌ Failed to load current bookings:', err.message);
@@ -171,6 +214,12 @@ app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator'), asyn
 
     const rawBookings = snapshot.allRows || [];
     const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
+
+    // RBAC: ONLY admin can see payment/financial details. For operator, sanitize them out.
+    if (req.user && req.user.role !== 'admin') {
+      const sanitized = sanitizeFinancials(snapshot.headers || [], bookings);
+      return res.json(sanitized);
+    }
 
     res.json({
       headers: snapshot.headers || [],
