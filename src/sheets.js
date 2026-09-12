@@ -51,7 +51,8 @@ function getCellColor(color) {
   const r = color.red !== undefined ? color.red : 0;
   const g = color.green !== undefined ? color.green : 0;
   const b = color.blue !== undefined ? color.blue : 0;
-  if (r >= 0.99 && g >= 0.99 && b >= 0.99) {
+  // Near-white or light grey shades (like Google Sheets default light grey #f3f3f3 which has r,g,b ~0.953)
+  if (r >= 0.92 && g >= 0.92 && b >= 0.92) {
     return 'WHITE';
   }
   const R = Math.round(r * 255);

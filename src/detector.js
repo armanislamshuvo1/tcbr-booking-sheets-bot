@@ -301,4 +301,18 @@ function getStayDays(checkInStr, checkOutStr) {
   return days;
 }
 
-module.exports = { detectChanges, buildCurrentMonthMap, parseDate, isCurrentMonth, isBookingInCurrentMonth, rowKey, findHeaderRowIndex, getMonthNameFromText, getMonthIndexFromText, getStayDays };
+function isColorWhite(color) {
+  if (!color) return true;
+  const str = color.toString().trim().toUpperCase();
+  if (str === 'WHITE' || str === '' || str === '—') return true;
+  const m = str.match(/RGB\((\d+),\s*(\d+),\s*(\d+)\)/i);
+  if (m) {
+    const r = parseInt(m[1], 10);
+    const g = parseInt(m[2], 10);
+    const b = parseInt(m[3], 10);
+    if (r >= 235 && g >= 235 && b >= 235) return true;
+  }
+  return false;
+}
+
+module.exports = { detectChanges, buildCurrentMonthMap, parseDate, isCurrentMonth, isBookingInCurrentMonth, rowKey, findHeaderRowIndex, getMonthNameFromText, getMonthIndexFromText, getStayDays, isColorWhite };

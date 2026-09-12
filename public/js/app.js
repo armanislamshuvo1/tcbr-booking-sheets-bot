@@ -610,6 +610,7 @@ function updateInHouseStats(targetDate) {
   const checkInIdx = bookingsHeaders.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN'].includes(h.toString().trim().toUpperCase()));
   const checkOutIdx = bookingsHeaders.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'].includes(h.toString().trim().toUpperCase()));
   const remarkIdx = bookingsHeaders.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+  const specialReqIdx = bookingsHeaders.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
   const codeIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
 
   const bookingsByCode = {};
@@ -617,9 +618,11 @@ function updateInHouseStats(targetDate) {
   bookingsList.forEach((item, index) => {
     const rowData = item.row || [];
     const remarkVal = (remarkIdx !== -1 ? (rowData[remarkIdx] || '') : (rowData[22] || '')).toString().toLowerCase();
+    const specialReqVal = (specialReqIdx !== -1 ? (rowData[specialReqIdx] || '') : (rowData[13] || '')).toString().toLowerCase();
+    const combinedVal = `${remarkVal} ${specialReqVal}`;
 
     // Exclude cancelled or postponed bookings
-    if (remarkVal.includes('cancel') || remarkVal.includes('cancle') || remarkVal.includes('cancelled') || remarkVal.includes('postpone') || remarkVal.includes('postponed')) {
+    if (combinedVal.includes('cancel') || combinedVal.includes('cancle') || combinedVal.includes('cancelled') || combinedVal.includes('postpone') || combinedVal.includes('postponed')) {
       return;
     }
 
@@ -987,6 +990,21 @@ function renderContent() {
   }
 }
 
+// Helper to check if a color is effectively white (including off-white / light grey like rgb(243,243,243))
+function isColorWhite(color) {
+  if (!color) return true;
+  const str = color.toString().trim().toUpperCase();
+  if (str === 'WHITE' || str === '' || str === '—') return true;
+  const m = str.match(/RGB\((\d+),\s*(\d+),\s*(\d+)\)/i);
+  if (m) {
+    const r = parseInt(m[1], 10);
+    const g = parseInt(m[2], 10);
+    const b = parseInt(m[3], 10);
+    if (r >= 235 && g >= 235 && b >= 235) return true;
+  }
+  return false;
+}
+
 // ── Build a single change card ──────────────────────────────────────────────
 function buildCard(item, idx) {
   const id = `card-${idx}`;
@@ -1005,14 +1023,14 @@ function buildCard(item, idx) {
           </div>
         </div>
         <div class="card-body">
-          <p style="color:var(--red);font-size:0.85rem;padding-top:12px">${escapeHtml(item.event.error)}</p>
+          <p style="color:var(--red);font-weight:500">${escapeHtml(item.event.error)}</p>
         </div>
       </div>`;
   }
 
   const row = item.row;
-  const headers = row.headers || [];
   const rowData = row.row || [];
+  const headers = row.headers || [];
   
   // Find customer name, booking code, and check-in date dynamically for a more descriptive card title
   const nameIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
@@ -1029,28 +1047,32 @@ function buildCard(item, idx) {
   const rowColor = colorIndex !== -1 ? (rowData[colorIndex] || 'WHITE') : 'WHITE';
 
   const remarkIndex = headers.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+  const specialReqIndex = headers.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
   const remarkVal = remarkIndex !== -1 ? (rowData[remarkIndex] || '') : (rowData[22] || '');
+  const specialReqVal = specialReqIndex !== -1 ? (rowData[specialReqIndex] || '') : (rowData[13] || '');
   let remarkBadge = '';
   let titleRemarkInfo = '';
 
-  const isRowWhite = (rowColor.toString().trim().toUpperCase() === 'WHITE');
-  const lowerRemark = remarkVal.toLowerCase();
+  const isRowWhite = isColorWhite(rowColor);
+  const combinedRemark = `${remarkVal} ${specialReqVal}`.trim();
+  const lowerRemark = combinedRemark.toLowerCase();
+  const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
 
   // Special remark check (cancel, postpone, double code, duplicate, etc.)
-  const isSpecialRemark = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled') ||
+  const isSpecialRemark = isCancelled ||
                          lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
                          lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
                          lowerRemark.includes('double') || lowerRemark.includes('dup');
 
-  if (isRowWhite) {
-    if (isSpecialRemark && remarkVal.toString().trim()) {
+  if (isRowWhite || isCancelled) {
+    if (isSpecialRemark && combinedRemark) {
       let icon = '';
       let badgeText = '';
       let badgeBg = 'var(--red-bg)';
       let badgeColor = 'var(--red)';
       let badgeBorder = 'rgba(248,81,73,0.3)';
 
-      if (lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled')) {
+      if (isCancelled) {
         icon = '❌ ';
         badgeText = '❌ Cancelled';
       } else if (lowerRemark.includes('postpone') || lowerRemark.includes('postponed')) {
@@ -1067,7 +1089,22 @@ function buildCard(item, idx) {
       if (badgeText) {
         remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
       }
-      titleRemarkInfo = ` • ${icon}${remarkVal.toString().trim()}`;
+
+      let displayRemarkText = remarkVal.toString().trim();
+      const lowerRemarkOnly = remarkVal.toString().toLowerCase();
+      const lowerSpecialOnly = specialReqVal.toString().toLowerCase();
+      const isSpecialInRemark = lowerRemarkOnly.includes('cancel') || lowerRemarkOnly.includes('cancle') || lowerRemarkOnly.includes('cancled') || lowerRemarkOnly.includes('cancelled') || lowerRemarkOnly.includes('postpone') || lowerRemarkOnly.includes('postponed') || lowerRemarkOnly.includes('change') || lowerRemarkOnly.includes('changed') || lowerRemarkOnly.includes('chage') || lowerRemarkOnly.includes('chaged') || lowerRemarkOnly.includes('double') || lowerRemarkOnly.includes('dup');
+      const isSpecialInReq = lowerSpecialOnly.includes('cancel') || lowerSpecialOnly.includes('cancle') || lowerSpecialOnly.includes('cancled') || lowerSpecialOnly.includes('cancelled') || lowerSpecialOnly.includes('postpone') || lowerSpecialOnly.includes('postponed') || lowerSpecialOnly.includes('change') || lowerSpecialOnly.includes('changed') || lowerSpecialOnly.includes('chage') || lowerSpecialOnly.includes('chaged') || lowerSpecialOnly.includes('double') || lowerSpecialOnly.includes('dup');
+
+      if (isSpecialInRemark) {
+        displayRemarkText = remarkVal.toString().trim();
+      } else if (isSpecialInReq) {
+        displayRemarkText = specialReqVal.toString().trim();
+      } else {
+        displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
+      }
+
+      titleRemarkInfo = ` • ${icon}${displayRemarkText}`;
     }
   }
 
@@ -1241,10 +1278,12 @@ function buildBookingCard(booking, idx) {
   const roomPaxIndex = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
   const colorIndex = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROW_COLOR');
   const remarkIndex = bookingsHeaders.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+  const specialReqIndex = bookingsHeaders.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
   
   const roomVal = roomIndex !== -1 ? (rowData[roomIndex] || '—') : '—';
   const rowColor = colorIndex !== -1 ? (rowData[colorIndex] || 'WHITE') : 'WHITE';
   const remarkVal = remarkIndex !== -1 ? (rowData[remarkIndex] || '') : (rowData[22] || '');
+  const specialReqVal = specialReqIndex !== -1 ? (rowData[specialReqIndex] || '') : (rowData[13] || '');
 
   // Smart Pax Calculation: Prioritize activity pax (snorkellers + divers + course)
   const actPax = getRowActivityPaxClient(rowData);
@@ -1267,26 +1306,29 @@ function buildBookingCard(booking, idx) {
   let cardLeftBorder = 'var(--accent)';
   let titleRemarkInfo = '';
 
-  const isRowWhite = (rowColor.toString().trim().toUpperCase() === 'WHITE');
-  const lowerRemark = remarkVal.toLowerCase();
+  const isRowWhite = isColorWhite(rowColor);
+  const combinedRemark = `${remarkVal} ${specialReqVal}`.trim();
+  const lowerRemark = combinedRemark.toLowerCase();
+  const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
 
   // Special remark check (cancel, postpone, double code, duplicate, etc.)
-  const isSpecialRemark = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled') ||
+  const isSpecialRemark = isCancelled ||
                          lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
                          lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
                          lowerRemark.includes('double') || lowerRemark.includes('dup');
 
-  if (isRowWhite) {
-    if (isSpecialRemark && remarkVal.toString().trim()) {
+  if (isRowWhite || isCancelled) {
+    if (isSpecialRemark && combinedRemark) {
       let icon = '';
       let badgeText = '';
       let badgeBg = 'var(--red-bg)';
       let badgeColor = 'var(--red)';
       let badgeBorder = 'rgba(248,81,73,0.3)';
 
-      if (lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled')) {
+      if (isCancelled) {
         icon = '❌ ';
         badgeText = '❌ Cancelled';
+        cardLeftBorder = 'var(--red)';
       } else if (lowerRemark.includes('postpone') || lowerRemark.includes('postponed')) {
         icon = '⏳ ';
         badgeText = '⏳ Postponed';
@@ -1301,7 +1343,22 @@ function buildBookingCard(booking, idx) {
       if (badgeText) {
         remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
       }
-      titleRemarkInfo = `<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:normal;margin-left:8px">${icon}• ${escapeHtml(remarkVal.toString().trim())}</span>`;
+
+      let displayRemarkText = remarkVal.toString().trim();
+      const lowerRemarkOnly = remarkVal.toString().toLowerCase();
+      const lowerSpecialOnly = specialReqVal.toString().toLowerCase();
+      const isSpecialInRemark = lowerRemarkOnly.includes('cancel') || lowerRemarkOnly.includes('cancle') || lowerRemarkOnly.includes('cancled') || lowerRemarkOnly.includes('cancelled') || lowerRemarkOnly.includes('postpone') || lowerRemarkOnly.includes('postponed') || lowerRemarkOnly.includes('change') || lowerRemarkOnly.includes('changed') || lowerRemarkOnly.includes('chage') || lowerRemarkOnly.includes('chaged') || lowerRemarkOnly.includes('double') || lowerRemarkOnly.includes('dup');
+      const isSpecialInReq = lowerSpecialOnly.includes('cancel') || lowerSpecialOnly.includes('cancle') || lowerSpecialOnly.includes('cancled') || lowerSpecialOnly.includes('cancelled') || lowerSpecialOnly.includes('postpone') || lowerSpecialOnly.includes('postponed') || lowerSpecialOnly.includes('change') || lowerSpecialOnly.includes('changed') || lowerSpecialOnly.includes('chage') || lowerSpecialOnly.includes('chaged') || lowerSpecialOnly.includes('double') || lowerSpecialOnly.includes('dup');
+
+      if (isSpecialInRemark) {
+        displayRemarkText = remarkVal.toString().trim();
+      } else if (isSpecialInReq) {
+        displayRemarkText = specialReqVal.toString().trim();
+      } else {
+        displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
+      }
+
+      titleRemarkInfo = `<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:normal;margin-left:8px">${icon}• ${escapeHtml(displayRemarkText)}</span>`;
     }
   } else {
     // Row is colored. We ignore the remark and use the sheet color directly.
@@ -1495,6 +1552,7 @@ function renderInHouseList(container, searchQuery, targetDateInput, badgeCountEl
   const checkInIdx = bookingsHeaders.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN'].includes(h.toString().trim().toUpperCase()));
   const checkOutIdx = bookingsHeaders.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'].includes(h.toString().trim().toUpperCase()));
   const remarkIdx = bookingsHeaders.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+  const specialReqIdx = bookingsHeaders.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
   const codeIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
   const nameIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
 
@@ -1503,8 +1561,10 @@ function renderInHouseList(container, searchQuery, targetDateInput, badgeCountEl
   bookingsList.forEach((item, index) => {
     const rowData = item.row || [];
     const remarkVal = (remarkIdx !== -1 ? (rowData[remarkIdx] || '') : (rowData[22] || '')).toString().toLowerCase();
+    const specialReqVal = (specialReqIdx !== -1 ? (rowData[specialReqIdx] || '') : (rowData[13] || '')).toString().toLowerCase();
+    const combinedVal = `${remarkVal} ${specialReqVal}`;
 
-    if (remarkVal.includes('cancel') || remarkVal.includes('cancle') || remarkVal.includes('cancelled') || remarkVal.includes('postpone') || remarkVal.includes('postponed')) {
+    if (combinedVal.includes('cancel') || combinedVal.includes('cancle') || combinedVal.includes('cancelled') || combinedVal.includes('postpone') || combinedVal.includes('postponed')) {
       return;
     }
 

@@ -294,6 +294,7 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
     const headers = snapshot.headers || [];
     const roomPaxIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
     const remarkIdx = headers.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+    const specialReqIdx = headers.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
     const codeIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
 
     const roomIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
@@ -308,7 +309,9 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       const row = item.row || item;
       
       const remarkVal = (remarkIdx !== -1 ? (row[remarkIdx] || '') : (row[22] || '')).toString().toLowerCase();
-      if (remarkVal.includes('cancel') || remarkVal.includes('cancle') || remarkVal.includes('cancelled') || remarkVal.includes('postpone') || remarkVal.includes('postponed')) {
+      const specialReqVal = (specialReqIdx !== -1 ? (row[specialReqIdx] || '') : (row[13] || '')).toString().toLowerCase();
+      const combinedVal = `${remarkVal} ${specialReqVal}`;
+      if (combinedVal.includes('cancel') || combinedVal.includes('cancle') || combinedVal.includes('cancelled') || combinedVal.includes('postpone') || combinedVal.includes('postponed')) {
         continue;
       }
 

@@ -1,5 +1,5 @@
 const { sendMessage } = require('./telegram');
-const { findHeaderRowIndex, parseDate } = require('./detector');
+const { findHeaderRowIndex, parseDate, isColorWhite } = require('./detector');
 
 const REMINDER_CHANNEL_ID = process.env.TELEGRAM_REMINDER_CHANNEL_ID;
 
@@ -87,11 +87,17 @@ async function checkAndSend30DayReminders(rows, previousSnapshot) {
     const rowColor = colorIdx !== -1 ? (row[colorIdx] || 'WHITE') : 'WHITE';
 
     const remarkIdx = headers.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
+    const specialReqIdx = headers.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
     const remarkVal = remarkIdx !== -1 ? (row[remarkIdx] || '') : '';
+    const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
-    if (rowColor === 'WHITE') {
-      const lowerRemark = remarkVal.toLowerCase();
-      const isSpecialRemark = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled') ||
+    const isRowWhite = isColorWhite(rowColor);
+    const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
+    const lowerRemark = combinedVal.toLowerCase();
+    const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
+
+    if (isRowWhite || isCancelled) {
+      const isSpecialRemark = isCancelled ||
                              lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
                              lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
                              lowerRemark.includes('double') || lowerRemark.includes('dup');
