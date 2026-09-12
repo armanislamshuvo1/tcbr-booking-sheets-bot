@@ -198,13 +198,49 @@ function findHeaderRowIndex(rows) {
 function buildCurrentMonthMap(rows, referenceDate = new Date()) {
   const map = {};
   const headerIndex = findHeaderRowIndex(rows);
+  const headers = rows[headerIndex] || [];
+
+  let checkInCol = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+  if (checkInCol === -1) checkInCol = CHECK_IN_COL;
+
+  let checkOutCol = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+  if (checkOutCol === -1) checkOutCol = CHECK_OUT_COL;
+
+  let codeCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+  if (codeCol === -1) codeCol = 1;
+
+  let lastCode = '';
+  let lastCheckIn = null;
+  let lastCheckOut = null;
 
   // Skip header row
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
-    if (!row) continue;
-    const checkIn  = parseDate(row[CHECK_IN_COL]);
-    const checkOut = parseDate(row[CHECK_OUT_COL]);
+    if (!row || row.slice(0, -1).every(cell => !cell || cell.toString().trim() === '')) {
+      lastCode = '';
+      lastCheckIn = null;
+      lastCheckOut = null;
+      continue;
+    }
+
+    const code = codeCol !== -1 ? (row[codeCol] || '').toString().trim().toUpperCase() : '';
+    let checkIn  = parseDate(row[checkInCol]);
+    let checkOut = parseDate(row[checkOutCol]);
+
+    if (code) {
+      if (code === lastCode) {
+        if (!checkIn && lastCheckIn) checkIn = lastCheckIn;
+        if (!checkOut && lastCheckOut) checkOut = lastCheckOut;
+      } else {
+        lastCode = code;
+        lastCheckIn = checkIn;
+        lastCheckOut = checkOut;
+      }
+    } else {
+      lastCode = '';
+      lastCheckIn = null;
+      lastCheckOut = null;
+    }
 
     if (isBookingInCurrentMonth(checkIn, checkOut, referenceDate)) {
       const key = rowKey(row, i);

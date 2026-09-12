@@ -501,9 +501,68 @@ async function enrichSheetRows(rows) {
   const currentMonthName = MONTH_NAMES[new Date().getMonth()];
   monthsToFetch.add(currentMonthName);
 
-  const checkInIndex = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN'].includes(h.toString().trim().toUpperCase()));
-  const checkOutIndex = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'].includes(h.toString().trim().toUpperCase()));
-  
+  const checkInIndex = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+  const checkOutIndex = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+  const codeIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+  const picIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'PIC');
+
+  // Forward-fill missing Check-In / Check-Out dates & PIC for rows sharing the same booking code
+  let forwardCode = '';
+  let forwardCheckIn = '';
+  let forwardCheckOut = '';
+  let forwardPic = '';
+
+  for (let i = headerIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.slice(0, -1).every(cell => !cell || cell.toString().trim() === '')) {
+      forwardCode = '';
+      forwardCheckIn = '';
+      forwardCheckOut = '';
+      forwardPic = '';
+      continue;
+    }
+
+    const code = codeIndex !== -1 ? (row[codeIndex] || '').toString().trim().toUpperCase() : '';
+    const checkInVal = checkInIndex !== -1 ? (row[checkInIndex] || '').toString().trim() : '';
+    const checkOutVal = checkOutIndex !== -1 ? (row[checkOutIndex] || '').toString().trim() : '';
+    const picVal = picIndex !== -1 ? (row[picIndex] || '').toString().trim() : '';
+
+    if (code) {
+      if (code === forwardCode) {
+        if (!checkInVal && forwardCheckIn && checkInIndex !== -1) {
+          while (row.length <= checkInIndex) row.push('');
+          row[checkInIndex] = forwardCheckIn;
+        } else if (checkInVal) {
+          forwardCheckIn = checkInVal;
+        }
+
+        if (!checkOutVal && forwardCheckOut && checkOutIndex !== -1) {
+          while (row.length <= checkOutIndex) row.push('');
+          row[checkOutIndex] = forwardCheckOut;
+        } else if (checkOutVal) {
+          forwardCheckOut = checkOutVal;
+        }
+
+        if (!picVal && forwardPic && picIndex !== -1) {
+          while (row.length <= picIndex) row.push('');
+          row[picIndex] = forwardPic;
+        } else if (picVal) {
+          forwardPic = picVal;
+        }
+      } else {
+        forwardCode = code;
+        forwardCheckIn = checkInVal;
+        forwardCheckOut = checkOutVal;
+        forwardPic = picVal;
+      }
+    } else {
+      forwardCode = '';
+      forwardCheckIn = '';
+      forwardCheckOut = '';
+      forwardPic = '';
+    }
+  }
+
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
@@ -548,9 +607,7 @@ async function enrichSheetRows(rows) {
     headers[headers.length - 1] = 'ROW_COLOR';
   }
 
-  const codeIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
   const nameIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
-  const picIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'PIC');
   const colorIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROW_COLOR');
   
   headers.push('ROOM');

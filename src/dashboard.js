@@ -304,6 +304,10 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
     const rawAllRows = snapshot.allRows || [];
     const allRows = await applyOverridesToRows(rawAllRows, snapshot.headers || []);
 
+    let lastInHouseCode = '';
+    let lastInHouseCheckIn = null;
+    let lastInHouseCheckOut = null;
+
     for (let i = 0; i < allRows.length; i++) {
       const item = allRows[i];
       const row = item.row || item;
@@ -315,10 +319,26 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
         continue;
       }
 
+      const rawCode = (codeIdx !== -1 && row[codeIdx]) ? row[codeIdx].toString().trim().toUpperCase() : '';
       const checkInStr = row[7];
       const checkOutStr = row[8];
-      const checkIn = parseDate(checkInStr);
-      const checkOut = parseDate(checkOutStr);
+      let checkIn = parseDate(checkInStr);
+      let checkOut = parseDate(checkOutStr);
+
+      if (rawCode) {
+        if (rawCode === lastInHouseCode) {
+          if (!checkIn && lastInHouseCheckIn) checkIn = lastInHouseCheckIn;
+          if (!checkOut && lastInHouseCheckOut) checkOut = lastInHouseCheckOut;
+        } else {
+          lastInHouseCode = rawCode;
+          lastInHouseCheckIn = checkIn;
+          lastInHouseCheckOut = checkOut;
+        }
+      } else {
+        lastInHouseCode = '';
+        lastInHouseCheckIn = null;
+        lastInHouseCheckOut = null;
+      }
 
       if (!checkIn) continue;
 

@@ -344,9 +344,16 @@ function buildReport(rows) {
   }
 
   // Scan data rows
+  let lastReportCode = '';
+  let lastReportCheckIn = null;
+  let lastReportCheckOut = null;
+
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.slice(0, -1).every(cell => !cell || cell.toString().trim() === '')) {
+      lastReportCode = '';
+      lastReportCheckIn = null;
+      lastReportCheckOut = null;
       continue;
     }
 
@@ -382,8 +389,24 @@ function buildReport(rows) {
       const checkInRaw  = checkInIdx  !== -1 ? (row[checkInIdx]  || '').toString().trim() : '';
       const checkOutRaw = checkOutIdx !== -1 ? (row[checkOutIdx] || '').toString().trim() : '';
 
-      const checkInDate  = parseDate(checkInRaw);
-      const checkOutDate = parseDate(checkOutRaw);
+      let checkInDate  = parseDate(checkInRaw);
+      let checkOutDate = parseDate(checkOutRaw);
+
+      const upperCode = code ? code.toUpperCase() : '';
+      if (upperCode) {
+        if (upperCode === lastReportCode) {
+          if (!checkInDate && lastReportCheckIn) checkInDate = lastReportCheckIn;
+          if (!checkOutDate && lastReportCheckOut) checkOutDate = lastReportCheckOut;
+        } else {
+          lastReportCode = upperCode;
+          lastReportCheckIn = checkInDate;
+          lastReportCheckOut = checkOutDate;
+        }
+      } else {
+        lastReportCode = '';
+        lastReportCheckIn = null;
+        lastReportCheckOut = null;
+      }
 
       // Skip rows with no code AND no name AND no valid dates (likely empty or metadata rows)
       if (!code && !name && !checkInDate && !checkOutDate) continue;
