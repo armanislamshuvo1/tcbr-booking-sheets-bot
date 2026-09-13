@@ -146,6 +146,17 @@ function parseDivingPax(str) {
   }
   s = s.replace(/(\d+)\s*Baby\b/gi, ' ').trim();
 
+  // Remove dive count addons so they are not counted as additional pax
+  // (e.g. "+ 3 boat dive", "+ 3 Boat Fun Dive", "+ 3 boat", "+ 5 dives")
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  if (adults > 0 || children > 0 || babies > 0) {
+    s = s.replace(diveCountRegex, ' ').trim();
+  } else {
+    // If no divers found yet, remove qualified dive counts like "3 boat dive", "+ 4 dives"
+    s = s.replace(/[+,&]\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)/gi, ' ').trim();
+    s = s.replace(/\d+\s+(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+(?:dives?|boats?|trips?)/gi, ' ').trim();
+  }
+
   // 7. Check for remaining numbers in the text (e.g., bare numbers "2", "5 dives", or other diver titles)
   const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
   for (const m of remainingNumbers) {
@@ -174,8 +185,9 @@ function parseCoursePax(str) {
   // Clean up parenthetical text (e.g. "(12 years old)", "(5 Dives)", "(age 14)")
   let s = str.replace(/\([^)]*\)/g, '').trim();
   // Clean up any extra dive count or free boat dive text
-  // e.g. "+ 4 Dives", "Free 1 boat dive each", "free 1 boat dives"
-  s = s.replace(/\+?\s*(?:free\s*)?\d+\s*(?:boat\s*)?dives?(?:\s*each)?/gi, '').trim();
+  // e.g. "+ 3 Boat Fun Dive", "+ 3 boat dive", "+ 3 boat", "+ 4 Dives", "Free 1 boat dive each", "free 1 boat dives"
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
   if (!s) return { a: 0, c: 0, b: 0 };
 
   let total = 0;

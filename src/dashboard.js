@@ -254,6 +254,10 @@ function parsePaxString(str) {
   }
   s = s.replace(insRegex, ' ').trim();
 
+  // Clean up any extra dive count or free boat dive text so they are not counted as pax
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
+
   const matches = s.matchAll(/(\d+)/g);
   for (const m of matches) {
     const val = parseInt(m[1], 10);

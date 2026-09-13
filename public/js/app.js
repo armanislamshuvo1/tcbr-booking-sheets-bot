@@ -471,7 +471,11 @@ function parsePaxString(str) {
   }
   s = s.replace(insRegex, ' ').trim();
 
-  // 3. Match remaining numbers
+  // 3. Clean up any extra dive count or free boat dive text so they are not counted as pax
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
+
+  // 4. Match remaining numbers
   const matches = s.matchAll(/(\d+)/g);
   for (const m of matches) {
     const val = parseInt(m[1], 10);
@@ -564,6 +568,17 @@ function parseDivingPaxClient(str) {
   }
   s = s.replace(/(\d+)\s*Baby\b/gi, ' ').trim();
 
+  // Remove dive count addons so they are not counted as additional pax
+  // (e.g. "+ 3 boat dive", "+ 3 Boat Fun Dive", "+ 3 boat", "+ 5 dives")
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  if (total > 0) {
+    s = s.replace(diveCountRegex, ' ').trim();
+  } else {
+    // If no divers found yet, remove qualified dive counts like "3 boat dive", "+ 4 dives"
+    s = s.replace(/[+,&]\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)/gi, ' ').trim();
+    s = s.replace(/\d+\s+(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+(?:dives?|boats?|trips?)/gi, ' ').trim();
+  }
+
   // 6. Check for remaining numbers in the text (e.g., bare numbers "2", "5 dives", or other diver titles)
   const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
   for (const m of remainingNumbers) {
@@ -576,7 +591,10 @@ function parseDivingPaxClient(str) {
 function parseCoursePaxClient(str) {
   if (!str || typeof str !== 'string') return 0;
   let s = str.replace(/\([^)]*\)/g, '').trim();
-  s = s.replace(/\+?\s*(?:free\s*)?\d+\s*(?:boat\s*)?dives?(?:\s*each)?/gi, '').trim();
+  // Clean up any extra dive count or free boat dive text
+  // e.g. "+ 3 Boat Fun Dive", "+ 3 boat dive", "+ 3 boat", "+ 4 Dives", "Free 1 boat dive each", "free 1 boat dives"
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
   if (!s) return 0;
   let total = 0;
   const matches = s.match(/\d+\s*[A-Za-z][A-Za-z-]*/g);
