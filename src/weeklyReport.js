@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { sendMessage, editMessageText } = require('./telegram');
-const { findHeaderRowIndex, parseDate, getMonthNameFromText, isColorWhite } = require('./detector');
+const { findHeaderRowIndex, parseDate, getMonthNameFromText, isColorWhite, isSpecialRemarkText } = require('./detector');
 const { loadBotConfig } = require('./snapshot');
 
 const KL_TIMEZONE = 'Asia/Kuala_Lumpur';
@@ -378,20 +378,12 @@ function buildReport(rows) {
     const remarkVal = remarkIdx !== -1 ? (row[remarkIdx] || '') : '';
     const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
-    const isRowWhite = isColorWhite(rowColor);
     const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
     const lowerRemark = combinedVal.toLowerCase();
-    const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
-
-    if (isRowWhite || isCancelled) {
-      const isSpecialRemark = isCancelled ||
-                             lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
-                             lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
-                             lowerRemark.includes('double') || lowerRemark.includes('dup');
-      const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
-      if (isSpecialRemark && !isHistorical) {
-        continue;
-      }
+    const isSpecialRemark = isSpecialRemarkText(combinedVal);
+    const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
+    if (isSpecialRemark && !isHistorical) {
+      continue;
     }
 
     try {
@@ -832,19 +824,11 @@ function buildCustomDateReport(rows, options = {}) {
     const remarkVal = remarkIdx !== -1 ? (row[remarkIdx] || '') : '';
     const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
-    const isRowWhite = isColorWhite(rowColor);
     const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
     const lowerRemark = combinedVal.toLowerCase();
-    const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
-
-    if (isRowWhite || isCancelled) {
-      const isSpecialRemark = isCancelled ||
-                             lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
-                             lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
-                             lowerRemark.includes('double') || lowerRemark.includes('dup');
-      const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
-      if (isSpecialRemark && !isHistorical) continue;
-    }
+    const isSpecialRemark = isSpecialRemarkText(combinedVal);
+    const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
+    if (isSpecialRemark && !isHistorical) continue;
 
     try {
       const code  = codeIdx !== -1 ? (row[codeIdx] || '').toString().trim() : '';

@@ -640,7 +640,7 @@ function updateInHouseStats(targetDate) {
     const combinedVal = `${remarkVal} ${specialReqVal}`;
 
     // Exclude cancelled or postponed bookings
-    if (combinedVal.includes('cancel') || combinedVal.includes('cancle') || combinedVal.includes('cancelled') || combinedVal.includes('postpone') || combinedVal.includes('postponed')) {
+    if (isCancelledText(combinedVal) || isPostponedText(combinedVal)) {
       return;
     }
 
@@ -1023,6 +1023,129 @@ function isColorWhite(color) {
   return false;
 }
 
+function levenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+function isPostponedText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  // Common exact substrings and frequent typo variants
+  if (
+    lower.includes('postpone') ||
+    lower.includes('pospone') ||
+    lower.includes('postpond') ||
+    lower.includes('pospond') ||
+    lower.includes('postpne') ||
+    lower.includes('postone') ||
+    lower.includes('potspon') ||
+    lower.includes('popstone')
+  ) {
+    return true;
+  }
+
+  // Handle collapsed spaces/hyphens: "post pone", "post-pone", "pos poned"
+  const collapsed = lower.replace(/[\s\-_]+/g, '');
+  if (
+    collapsed.includes('postpone') ||
+    collapsed.includes('pospone') ||
+    collapsed.includes('postpond') ||
+    collapsed.includes('pospond') ||
+    collapsed.includes('postpne') ||
+    collapsed.includes('postone') ||
+    collapsed.includes('potspon') ||
+    collapsed.includes('popstone')
+  ) {
+    return true;
+  }
+
+  // Regex for typo patterns
+  if (/\bp+o*s+t*[\s\-_]*p+o*n+[a-z]*\b/i.test(lower) || /\bp+o*t+s*[\s\-_]*p+o*n+[a-z]*\b/i.test(lower)) {
+    return true;
+  }
+
+  // Word-level fuzzy Levenshtein distance
+  const words = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 5);
+  for (const word of words) {
+    if (levenshteinDistance(word, 'postpone') <= 2 || levenshteinDistance(word, 'postponed') <= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isCancelledText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  if (
+    lower.includes('cancel') ||
+    lower.includes('cancle') ||
+    lower.includes('cancled') ||
+    lower.includes('cancelled') ||
+    lower.includes('canceled') ||
+    lower.includes('cancell') ||
+    lower.includes('cencel') ||
+    lower.includes('cancal')
+  ) {
+    return true;
+  }
+
+  const collapsed = lower.replace(/[\s\-_]+/g, '');
+  if (collapsed.includes('cancel') || collapsed.includes('cancle') || collapsed.includes('cancelled') || collapsed.includes('canceled')) {
+    return true;
+  }
+
+  const words = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4);
+  for (const word of words) {
+    if (levenshteinDistance(word, 'cancel') <= 1 || levenshteinDistance(word, 'cancelled') <= 2 || levenshteinDistance(word, 'canceled') <= 2) {
+      if (['candle', 'dancer', 'channel', 'panel'].includes(word)) continue;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isChangedText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return lower.includes('change') || lower.includes('changed') || lower.includes('chage') || lower.includes('chaged') || lower.includes('chanegd');
+}
+
+function isDoubleCodeText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return lower.includes('double') || lower.includes('dup');
+}
+
+function isSpecialRemarkText(text) {
+  return isCancelledText(text) || isPostponedText(text) || isChangedText(text) || isDoubleCodeText(text);
+}
+
 // ── Build a single change card ──────────────────────────────────────────────
 function buildCard(item, idx) {
   const id = `card-${idx}`;
@@ -1073,57 +1196,59 @@ function buildCard(item, idx) {
 
   const isRowWhite = isColorWhite(rowColor);
   const combinedRemark = `${remarkVal} ${specialReqVal}`.trim();
-  const lowerRemark = combinedRemark.toLowerCase();
-  const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
+  const isCancelled = isCancelledText(combinedRemark);
+  const isPostponed = isPostponedText(combinedRemark);
+  const isChanged = isChangedText(combinedRemark);
+  const isDouble = isDoubleCodeText(combinedRemark);
+  const isSpecialRemark = isCancelled || isPostponed || isChanged || isDouble;
 
-  // Special remark check (cancel, postpone, double code, duplicate, etc.)
-  const isSpecialRemark = isCancelled ||
-                         lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
-                         lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
-                         lowerRemark.includes('double') || lowerRemark.includes('dup');
+  if (isSpecialRemark && combinedRemark) {
+    let icon = '';
+    let badgeText = '';
+    let badgeBg = 'var(--red-bg)';
+    let badgeColor = 'var(--red)';
+    let badgeBorder = 'rgba(248,81,73,0.3)';
 
-  if (isRowWhite || isCancelled) {
-    if (isSpecialRemark && combinedRemark) {
-      let icon = '';
-      let badgeText = '';
-      let badgeBg = 'var(--red-bg)';
-      let badgeColor = 'var(--red)';
-      let badgeBorder = 'rgba(248,81,73,0.3)';
-
-      if (isCancelled) {
-        icon = '❌ ';
-        badgeText = '❌ Cancelled';
-      } else if (lowerRemark.includes('postpone') || lowerRemark.includes('postponed')) {
-        icon = '⏳ ';
-        badgeText = '⏳ Postponed';
-      } else if (lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged')) {
-        icon = '🔄 ';
-        badgeText = '🔄 Changed';
-      } else if (lowerRemark.includes('double') || lowerRemark.includes('dup')) {
-        icon = '⚠️ ';
-        badgeText = '⚠️ Double Code';
-      }
-
-      if (badgeText) {
-        remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
-      }
-
-      let displayRemarkText = remarkVal.toString().trim();
-      const lowerRemarkOnly = remarkVal.toString().toLowerCase();
-      const lowerSpecialOnly = specialReqVal.toString().toLowerCase();
-      const isSpecialInRemark = lowerRemarkOnly.includes('cancel') || lowerRemarkOnly.includes('cancle') || lowerRemarkOnly.includes('cancled') || lowerRemarkOnly.includes('cancelled') || lowerRemarkOnly.includes('postpone') || lowerRemarkOnly.includes('postponed') || lowerRemarkOnly.includes('change') || lowerRemarkOnly.includes('changed') || lowerRemarkOnly.includes('chage') || lowerRemarkOnly.includes('chaged') || lowerRemarkOnly.includes('double') || lowerRemarkOnly.includes('dup');
-      const isSpecialInReq = lowerSpecialOnly.includes('cancel') || lowerSpecialOnly.includes('cancle') || lowerSpecialOnly.includes('cancled') || lowerSpecialOnly.includes('cancelled') || lowerSpecialOnly.includes('postpone') || lowerSpecialOnly.includes('postponed') || lowerSpecialOnly.includes('change') || lowerSpecialOnly.includes('changed') || lowerSpecialOnly.includes('chage') || lowerSpecialOnly.includes('chaged') || lowerSpecialOnly.includes('double') || lowerSpecialOnly.includes('dup');
-
-      if (isSpecialInRemark) {
-        displayRemarkText = remarkVal.toString().trim();
-      } else if (isSpecialInReq) {
-        displayRemarkText = specialReqVal.toString().trim();
-      } else {
-        displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
-      }
-
-      titleRemarkInfo = ` • ${icon}${displayRemarkText}`;
+    if (isCancelled) {
+      icon = '❌ ';
+      badgeText = '❌ Cancelled';
+    } else if (isPostponed) {
+      icon = '⏳ ';
+      badgeText = '⏳ Postponed';
+      badgeBg = 'rgba(210, 153, 34, 0.15)';
+      badgeColor = '#e3b341';
+      badgeBorder = 'rgba(210, 153, 34, 0.4)';
+    } else if (isChanged) {
+      icon = '🔄 ';
+      badgeText = '🔄 Changed';
+      badgeBg = 'rgba(56, 139, 253, 0.15)';
+      badgeColor = '#58a6ff';
+      badgeBorder = 'rgba(56, 139, 253, 0.4)';
+    } else if (isDouble) {
+      icon = '⚠️ ';
+      badgeText = '⚠️ Double Code';
+      badgeBg = 'rgba(210, 153, 34, 0.15)';
+      badgeColor = '#e3b341';
+      badgeBorder = 'rgba(210, 153, 34, 0.4)';
     }
+
+    if (badgeText) {
+      remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
+    }
+
+    let displayRemarkText = remarkVal.toString().trim();
+    const isSpecialInRemark = isSpecialRemarkText(remarkVal.toString());
+    const isSpecialInReq = isSpecialRemarkText(specialReqVal.toString());
+
+    if (isSpecialInRemark) {
+      displayRemarkText = remarkVal.toString().trim();
+    } else if (isSpecialInReq) {
+      displayRemarkText = specialReqVal.toString().trim();
+    } else {
+      displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
+    }
+
+    titleRemarkInfo = ` • ${icon}${displayRemarkText}`;
   }
 
   const cardTitle = name 
@@ -1326,60 +1451,65 @@ function buildBookingCard(booking, idx) {
 
   const isRowWhite = isColorWhite(rowColor);
   const combinedRemark = `${remarkVal} ${specialReqVal}`.trim();
-  const lowerRemark = combinedRemark.toLowerCase();
-  const isCancelled = lowerRemark.includes('cancel') || lowerRemark.includes('cancle') || lowerRemark.includes('cancled') || lowerRemark.includes('cancelled');
+  const isCancelled = isCancelledText(combinedRemark);
+  const isPostponed = isPostponedText(combinedRemark);
+  const isChanged = isChangedText(combinedRemark);
+  const isDouble = isDoubleCodeText(combinedRemark);
+  const isSpecialRemark = isCancelled || isPostponed || isChanged || isDouble;
 
-  // Special remark check (cancel, postpone, double code, duplicate, etc.)
-  const isSpecialRemark = isCancelled ||
-                         lowerRemark.includes('postpone') || lowerRemark.includes('postponed') ||
-                         lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged') ||
-                         lowerRemark.includes('double') || lowerRemark.includes('dup');
+  if (isSpecialRemark && combinedRemark) {
+    let icon = '';
+    let badgeText = '';
+    let badgeBg = 'var(--red-bg)';
+    let badgeColor = 'var(--red)';
+    let badgeBorder = 'rgba(248,81,73,0.3)';
 
-  if (isRowWhite || isCancelled) {
-    if (isSpecialRemark && combinedRemark) {
-      let icon = '';
-      let badgeText = '';
-      let badgeBg = 'var(--red-bg)';
-      let badgeColor = 'var(--red)';
-      let badgeBorder = 'rgba(248,81,73,0.3)';
-
-      if (isCancelled) {
-        icon = '❌ ';
-        badgeText = '❌ Cancelled';
-        cardLeftBorder = 'var(--red)';
-      } else if (lowerRemark.includes('postpone') || lowerRemark.includes('postponed')) {
-        icon = '⏳ ';
-        badgeText = '⏳ Postponed';
-      } else if (lowerRemark.includes('change') || lowerRemark.includes('changed') || lowerRemark.includes('chage') || lowerRemark.includes('chaged')) {
-        icon = '🔄 ';
-        badgeText = '🔄 Changed';
-      } else if (lowerRemark.includes('double') || lowerRemark.includes('dup')) {
-        icon = '⚠️ ';
-        badgeText = '⚠️ Double Code';
-      }
-
-      if (badgeText) {
-        remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
-      }
-
-      let displayRemarkText = remarkVal.toString().trim();
-      const lowerRemarkOnly = remarkVal.toString().toLowerCase();
-      const lowerSpecialOnly = specialReqVal.toString().toLowerCase();
-      const isSpecialInRemark = lowerRemarkOnly.includes('cancel') || lowerRemarkOnly.includes('cancle') || lowerRemarkOnly.includes('cancled') || lowerRemarkOnly.includes('cancelled') || lowerRemarkOnly.includes('postpone') || lowerRemarkOnly.includes('postponed') || lowerRemarkOnly.includes('change') || lowerRemarkOnly.includes('changed') || lowerRemarkOnly.includes('chage') || lowerRemarkOnly.includes('chaged') || lowerRemarkOnly.includes('double') || lowerRemarkOnly.includes('dup');
-      const isSpecialInReq = lowerSpecialOnly.includes('cancel') || lowerSpecialOnly.includes('cancle') || lowerSpecialOnly.includes('cancled') || lowerSpecialOnly.includes('cancelled') || lowerSpecialOnly.includes('postpone') || lowerSpecialOnly.includes('postponed') || lowerSpecialOnly.includes('change') || lowerSpecialOnly.includes('changed') || lowerSpecialOnly.includes('chage') || lowerSpecialOnly.includes('chaged') || lowerSpecialOnly.includes('double') || lowerSpecialOnly.includes('dup');
-
-      if (isSpecialInRemark) {
-        displayRemarkText = remarkVal.toString().trim();
-      } else if (isSpecialInReq) {
-        displayRemarkText = specialReqVal.toString().trim();
-      } else {
-        displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
-      }
-
-      titleRemarkInfo = `<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:normal;margin-left:8px">${icon}• ${escapeHtml(displayRemarkText)}</span>`;
+    if (isCancelled) {
+      icon = '❌ ';
+      badgeText = '❌ Cancelled';
+      cardLeftBorder = 'var(--red)';
+    } else if (isPostponed) {
+      icon = '⏳ ';
+      badgeText = '⏳ Postponed';
+      badgeBg = 'rgba(210, 153, 34, 0.15)';
+      badgeColor = '#e3b341';
+      badgeBorder = 'rgba(210, 153, 34, 0.4)';
+      cardLeftBorder = !isRowWhite ? rowColor : 'rgba(210, 153, 34, 0.8)';
+    } else if (isChanged) {
+      icon = '🔄 ';
+      badgeText = '🔄 Changed';
+      badgeBg = 'rgba(56, 139, 253, 0.15)';
+      badgeColor = '#58a6ff';
+      badgeBorder = 'rgba(56, 139, 253, 0.4)';
+      cardLeftBorder = !isRowWhite ? rowColor : 'var(--accent)';
+    } else if (isDouble) {
+      icon = '⚠️ ';
+      badgeText = '⚠️ Double Code';
+      badgeBg = 'rgba(210, 153, 34, 0.15)';
+      badgeColor = '#e3b341';
+      badgeBorder = 'rgba(210, 153, 34, 0.4)';
+      cardLeftBorder = !isRowWhite ? rowColor : 'rgba(210, 153, 34, 0.8)';
     }
-  } else {
-    // Row is colored. We ignore the remark and use the sheet color directly.
+
+    if (badgeText) {
+      remarkBadge = `<span class="type-badge" style="background:${badgeBg};color:${badgeColor};border:1px solid ${badgeBorder};text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px">${badgeText}</span>`;
+    }
+
+    let displayRemarkText = remarkVal.toString().trim();
+    const isSpecialInRemark = isSpecialRemarkText(remarkVal.toString());
+    const isSpecialInReq = isSpecialRemarkText(specialReqVal.toString());
+
+    if (isSpecialInRemark) {
+      displayRemarkText = remarkVal.toString().trim();
+    } else if (isSpecialInReq) {
+      displayRemarkText = specialReqVal.toString().trim();
+    } else {
+      displayRemarkText = remarkVal.toString().trim() || specialReqVal.toString().trim();
+    }
+
+    titleRemarkInfo = `<span style="font-size:0.85rem;color:var(--text-secondary);font-weight:normal;margin-left:8px">${icon}• ${escapeHtml(displayRemarkText)}</span>`;
+  } else if (!isRowWhite) {
+    // Row is colored. We use the sheet color directly.
     cardLeftBorder = rowColor;
   }
 
@@ -1582,7 +1712,7 @@ function renderInHouseList(container, searchQuery, targetDateInput, badgeCountEl
     const specialReqVal = (specialReqIdx !== -1 ? (rowData[specialReqIdx] || '') : (rowData[13] || '')).toString().toLowerCase();
     const combinedVal = `${remarkVal} ${specialReqVal}`;
 
-    if (combinedVal.includes('cancel') || combinedVal.includes('cancle') || combinedVal.includes('cancelled') || combinedVal.includes('postpone') || combinedVal.includes('postponed')) {
+    if (isCancelledText(combinedVal) || isPostponedText(combinedVal)) {
       return;
     }
 

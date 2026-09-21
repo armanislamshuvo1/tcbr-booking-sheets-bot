@@ -351,4 +351,145 @@ function isColorWhite(color) {
   return false;
 }
 
-module.exports = { detectChanges, buildCurrentMonthMap, parseDate, isCurrentMonth, isBookingInCurrentMonth, rowKey, findHeaderRowIndex, getMonthNameFromText, getMonthIndexFromText, getStayDays, isColorWhite };
+function levenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+function isPostponedText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  // Common exact substrings and frequent typo variants
+  if (
+    lower.includes('postpone') ||
+    lower.includes('pospone') ||
+    lower.includes('postpond') ||
+    lower.includes('pospond') ||
+    lower.includes('postpne') ||
+    lower.includes('postone') ||
+    lower.includes('potspon') ||
+    lower.includes('popstone')
+  ) {
+    return true;
+  }
+
+  // Handle collapsed spaces/hyphens: "post pone", "post-pone", "pos poned"
+  const collapsed = lower.replace(/[\s\-_]+/g, '');
+  if (
+    collapsed.includes('postpone') ||
+    collapsed.includes('pospone') ||
+    collapsed.includes('postpond') ||
+    collapsed.includes('pospond') ||
+    collapsed.includes('postpne') ||
+    collapsed.includes('postone') ||
+    collapsed.includes('potspon') ||
+    collapsed.includes('popstone')
+  ) {
+    return true;
+  }
+
+  // Regex for typo patterns
+  if (/\bp+o*s+t*[\s\-_]*p+o*n+[a-z]*\b/i.test(lower) || /\bp+o*t+s*[\s\-_]*p+o*n+[a-z]*\b/i.test(lower)) {
+    return true;
+  }
+
+  // Word-level fuzzy Levenshtein distance
+  const words = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 5);
+  for (const word of words) {
+    if (levenshteinDistance(word, 'postpone') <= 2 || levenshteinDistance(word, 'postponed') <= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isCancelledText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  if (
+    lower.includes('cancel') ||
+    lower.includes('cancle') ||
+    lower.includes('cancled') ||
+    lower.includes('cancelled') ||
+    lower.includes('canceled') ||
+    lower.includes('cancell') ||
+    lower.includes('cencel') ||
+    lower.includes('cancal')
+  ) {
+    return true;
+  }
+
+  const collapsed = lower.replace(/[\s\-_]+/g, '');
+  if (collapsed.includes('cancel') || collapsed.includes('cancle') || collapsed.includes('cancelled') || collapsed.includes('canceled')) {
+    return true;
+  }
+
+  const words = lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4);
+  for (const word of words) {
+    if (levenshteinDistance(word, 'cancel') <= 1 || levenshteinDistance(word, 'cancelled') <= 2 || levenshteinDistance(word, 'canceled') <= 2) {
+      if (['candle', 'dancer', 'channel', 'panel'].includes(word)) continue;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isChangedText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return lower.includes('change') || lower.includes('changed') || lower.includes('chage') || lower.includes('chaged') || lower.includes('chanegd');
+}
+
+function isDoubleCodeText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return lower.includes('double') || lower.includes('dup');
+}
+
+function isSpecialRemarkText(text) {
+  return isCancelledText(text) || isPostponedText(text) || isChangedText(text) || isDoubleCodeText(text);
+}
+
+module.exports = {
+  detectChanges,
+  buildCurrentMonthMap,
+  parseDate,
+  isCurrentMonth,
+  isBookingInCurrentMonth,
+  rowKey,
+  findHeaderRowIndex,
+  getMonthNameFromText,
+  getMonthIndexFromText,
+  getStayDays,
+  isColorWhite,
+  levenshteinDistance,
+  isPostponedText,
+  isCancelledText,
+  isChangedText,
+  isDoubleCodeText,
+  isSpecialRemarkText
+};
