@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/styles.css" />
-  <script src="/js/app.js?v=8" defer></script>
+  <script src="/js/app.js?v=9" defer></script>
 </head>
 <body>
 
@@ -985,16 +985,19 @@
 
       <!-- Quick instructions banner -->
       <div id="wa-instructions-banner" style="background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 0.76rem; color: var(--text-muted); line-height: 1.4;">
-        <span style="color: var(--accent); font-weight: 600;">💡 How it works:</span> Clicking the button below opens WhatsApp Web with the text pre-filled. If the picture is attached, simply press <b>Ctrl + V</b> in WhatsApp Web to paste the photo before hitting Send!
+        <span style="color: var(--accent); font-weight: 600;">💡 How it works:</span> Clicking the button opens your installed WhatsApp App with the text pre-filled. If the picture is attached, simply press <b>Ctrl + V</b> in WhatsApp to paste the notice board photo before hitting Send!
       </div>
 
     </div>
 
     <!-- Modal Footer Actions -->
-    <div style="padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; background: var(--bg-secondary);">
+    <div style="padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; background: var(--bg-secondary); flex-wrap: wrap; align-items: center;">
       <button type="button" class="action-btn" onclick="closeWhatsAppModal()">Cancel</button>
-      <button type="button" id="wa-open-web-btn" class="action-btn primary-action-btn" onclick="dispatchWhatsAppWeb()" style="background: #25D366; border-color: #20ba5a; color: #fff; font-weight: 600; padding: 8px 18px;">
-        ⚡ Copy Picture & Open in WhatsApp Web ➔
+      <button type="button" id="wa-open-web-btn" class="action-btn" onclick="dispatchWhatsAppWeb()" title="Open in browser instead" style="font-size: 0.8rem; padding: 7px 14px; background: var(--bg-primary); border-color: var(--border);">
+        🌐 WhatsApp Web
+      </button>
+      <button type="button" id="wa-open-app-btn" class="action-btn primary-action-btn" onclick="dispatchWhatsAppApp()" style="background: #25D366; border-color: #20ba5a; color: #fff; font-weight: 600; padding: 8px 18px;">
+        ⚡ Copy Picture & Open in WhatsApp App ➔
       </button>
     </div>
 

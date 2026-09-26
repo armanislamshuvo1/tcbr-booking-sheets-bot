@@ -3713,7 +3713,7 @@ function selectWhatsAppTemplate(type) {
   const greetingBtn = document.getElementById('wa-tpl-greeting-btn');
   const checkoutBtn = document.getElementById('wa-tpl-checkout-btn');
   const pictureCard = document.getElementById('wa-picture-card');
-  const openWebBtn = document.getElementById('wa-open-web-btn');
+  const openAppBtn = document.getElementById('wa-open-app-btn') || document.getElementById('wa-open-web-btn');
   const instructionsBanner = document.getElementById('wa-instructions-banner');
   const messageText = document.getElementById('wa-message-text');
 
@@ -3725,17 +3725,17 @@ function selectWhatsAppTemplate(type) {
     if (greetingBtn) greetingBtn.className = 'action-btn primary-action-btn';
     if (checkoutBtn) checkoutBtn.className = 'action-btn';
     if (pictureCard) pictureCard.style.display = 'flex';
-    if (openWebBtn) openWebBtn.innerHTML = '⚡ Copy Picture & Open in WhatsApp Web ➔';
+    if (openAppBtn) openAppBtn.innerHTML = '⚡ Copy Picture & Open WhatsApp App ➔';
     if (instructionsBanner) {
-      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button copies the resort notice picture and opens WhatsApp Web. In WhatsApp Web, simply press <b>Ctrl + V</b> to paste the notice board photo before hitting Send!';
+      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button copies the resort notice picture and opens your installed WhatsApp App. In WhatsApp, simply press <b>Ctrl + V</b> to paste the notice board photo before hitting Send!';
     }
   } else {
     if (greetingBtn) greetingBtn.className = 'action-btn';
     if (checkoutBtn) checkoutBtn.className = 'action-btn primary-action-btn';
     if (pictureCard) pictureCard.style.display = 'none';
-    if (openWebBtn) openWebBtn.innerHTML = '🚀 Open in WhatsApp Web ➔';
+    if (openAppBtn) openAppBtn.innerHTML = '🚀 Open in WhatsApp App ➔';
     if (instructionsBanner) {
-      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button opens WhatsApp Web with the check-out reminder message pre-filled. Review and hit Send!';
+      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button opens your installed WhatsApp App with the check-out reminder message pre-filled. Review and hit Send!';
     }
   }
 }
@@ -3868,7 +3868,54 @@ async function saveWhatsAppPhoneDirect() {
 }
 
 /**
- * Dispatches message via WhatsApp Web (or WhatsApp mobile app).
+ * Dispatches message directly to the installed WhatsApp Desktop App (or mobile app).
+ * Uses the native 'whatsapp://' scheme.
+ * Automatically copies notice board picture to clipboard if Greeting template is active.
+ */
+async function dispatchWhatsAppApp() {
+  const phoneInput = document.getElementById('wa-phone-input');
+  const rawPhone = phoneInput ? phoneInput.value.trim() : '';
+  const normalized = normalizePhoneNumber(rawPhone);
+
+  if (!normalized || normalized.length < 8) {
+    showToast('⚠️ Please enter a valid customer phone number first!');
+    if (phoneInput) phoneInput.focus();
+    return;
+  }
+
+  const msgText = document.getElementById('wa-message-text')?.value || '';
+
+  // If greeting template is active, copy the notice board picture to clipboard
+  if (currentWhatsAppTemplate === 'greeting') {
+    try {
+      await copyNoticeBoardImageToClipboard();
+    } catch (e) {
+      console.warn('Auto copy notice image skipped:', e);
+    }
+  }
+
+  // Construct native WhatsApp application URL
+  const appUrl = `whatsapp://send?phone=${normalized}&text=${encodeURIComponent(msgText)}`;
+
+  // Use hidden anchor click to trigger OS protocol cleanly without reloading the page
+  const link = document.createElement('a');
+  link.href = appUrl;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    try { document.body.removeChild(link); } catch (_) {}
+  }, 1000);
+
+  if (currentWhatsAppTemplate === 'greeting') {
+    showToast('🚀 Opening WhatsApp App! Press Ctrl+V to paste the notice board photo.');
+  } else {
+    showToast('🚀 Opening WhatsApp App!');
+  }
+}
+
+/**
+ * Dispatches message via WhatsApp Web in a browser tab.
  * Automatically copies notice board picture to clipboard if Greeting template is active.
  */
 async function dispatchWhatsAppWeb() {
