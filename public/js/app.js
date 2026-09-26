@@ -126,6 +126,63 @@ function showToast(msg) {
   }, 4000);
 }
 
+// ── RBAC & Contacts Helpers ──
+function canManageBookingNumbers() {
+  return currentUser && (currentUser.role === 'admin' || currentUser.role === 'operator');
+}
+
+/**
+ * Extracts list of contacts [{ name, phone }] from booking object, overrides, or raw sheet data.
+ */
+function extractBookingContacts(booking, rowData, defaultName = 'Guest') {
+  let contacts = [];
+
+  // 1. Array from booking.contacts
+  if (Array.isArray(booking?.contacts) && booking.contacts.length > 0) {
+    contacts = booking.contacts.map(c => ({
+      name: (c && typeof c === 'object' && c.name ? c.name : (defaultName || 'Guest')).trim(),
+      phone: (c && typeof c === 'object' && c.phone ? c.phone : (typeof c === 'string' ? c : '')).trim()
+    })).filter(c => c.phone || c.name);
+  }
+  // 2. Array from booking.overrideMeta.fields.CONTACTS
+  else if (Array.isArray(booking?.overrideMeta?.fields?.CONTACTS)) {
+    contacts = booking.overrideMeta.fields.CONTACTS.map(c => ({
+      name: (c && typeof c === 'object' && c.name ? c.name : (defaultName || 'Guest')).trim(),
+      phone: (c && typeof c === 'object' && c.phone ? c.phone : (typeof c === 'string' ? c : '')).trim()
+    })).filter(c => c.phone || c.name);
+  }
+
+  // 3. Fallback from string phone / contact
+  if (contacts.length === 0) {
+    let rawPhone = booking?.phone || booking?.overrideMeta?.fields?.PHONE || '';
+    if (!rawPhone && bookingsHeaders && bookingsHeaders.length && rowData) {
+      const pIdx = bookingsHeaders.findIndex(h => h && ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'HP'].includes(h.toString().trim().toUpperCase()));
+      if (pIdx !== -1 && rowData[pIdx]) rawPhone = rowData[pIdx];
+    }
+
+    if (rawPhone && typeof rawPhone === 'string') {
+      const items = rawPhone.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+      if (items.length > 1) {
+        items.forEach(item => {
+          if (item.includes(':')) {
+            const parts = item.split(':');
+            contacts.push({ name: parts[0].trim(), phone: parts.slice(1).join(':').trim() });
+          } else {
+            contacts.push({ name: defaultName || 'Guest', phone: item });
+          }
+        });
+      } else if (rawPhone.includes(':')) {
+        const parts = rawPhone.split(':');
+        contacts.push({ name: parts[0].trim(), phone: parts.slice(1).join(':').trim() });
+      } else if (rawPhone.trim()) {
+        contacts.push({ name: defaultName || 'Guest', phone: rawPhone.trim() });
+      }
+    }
+  }
+
+  return contacts;
+}
+
 let activeTab = 'changelog'; // 'changelog', 'bookings', or 'allbookings'
 let displayLimit = 50; // Client-side pagination limit for rendering speed
 
@@ -1513,6 +1570,10 @@ function buildBookingCard(booking, idx) {
     cardLeftBorder = rowColor;
   }
 
+  const canEditNumbers = canManageBookingNumbers();
+  const contactsList = extractBookingContacts(booking, rowData, name);
+  const contactsSummary = contactsList.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
+
   // Fields requested by user to display in detail table
   const fields = [
     { key: 'CODE', val: rowData[1] },
@@ -1532,6 +1593,10 @@ function buildBookingCard(booking, idx) {
     { key: 'SPECIAL REQUEST', val: rowData[13] },
     { key: 'REMARK', val: remarkVal },
   ];
+
+  if (contactsSummary) {
+    fields.splice(3, 0, { key: 'PHONE / WHATSAPP', val: contactsSummary });
+  }
 
   // RBAC: ONLY Admin will see payment details (hidden from operator and jetty_staff)
   const canSeePayments = currentUser && currentUser.role === 'admin';
@@ -1569,11 +1634,13 @@ function buildBookingCard(booking, idx) {
     ? `<button class="action-btn" onclick="revertBookingOverrideDirect('${escapeHtml(String(booking.overrideMeta?.bookingKey || ''))}', ${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:rgba(248,81,73,0.15);color:var(--red);border-color:rgba(248,81,73,0.4);font-weight:600">↩️ Revert to Sheet</button>`
     : '';
 
+  const canEditBooking = canEditNumbers;
   const cardActionBar = `
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
+      <button class="action-btn" onclick="openWhatsAppModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, 0, event)" style="background:rgba(37,211,102,0.15);color:#25D366;border-color:rgba(37,211,102,0.4);font-weight:600">💬 WhatsApp</button>
       <button class="action-btn" onclick="copyBookingDetails(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:var(--bg-primary);color:var(--text-primary);border-color:var(--border);font-weight:600">📋 Copy Details</button>
       ${revertBtn}
-      ${(currentUser && currentUser.role === 'admin')
+      ${canEditBooking
         ? `<button class="action-btn" onclick="openEditBookingModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, '${escapeHtml(String(code))}')" style="background:var(--accent-glow);color:var(--accent);border-color:rgba(88,166,255,0.4);font-weight:600">✏️ Edit Booking Details</button>`
         : ''}
     </div>`;
@@ -2847,6 +2914,14 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   document.getElementById('edit-field-code').value = getFieldVal('CODE', ['BOOKING CODE'], 1);
   document.getElementById('edit-field-pic').value = getFieldVal('PIC', ['PERSON IN CHARGE'], 2);
 
+  // Customer Contacts (Names & Phone Numbers)
+  const guestName = getFieldVal('NAME', ['CUSTOMER NAME', 'GUEST NAME'], 3) || 'Guest';
+  editContactsList = extractBookingContacts(booking, rowData, guestName);
+  if (editContactsList.length === 0) {
+    editContactsList.push({ name: guestName, phone: '' });
+  }
+  renderEditContactsList();
+
   // Dates & Duration
   document.getElementById('edit-field-checkin').value = getFieldVal('CHECK IN', ['CHECK-IN', 'CHECKIN'], 7);
   document.getElementById('edit-field-checkout').value = getFieldVal('CHECK OUT', ['CHECK-OUT', 'CHECKOUT'], 8);
@@ -2890,6 +2965,42 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   modal.style.display = 'flex';
 }
 
+let editContactsList = [];
+
+function renderEditContactsList() {
+  const container = document.getElementById('edit-contacts-list');
+  if (!container) return;
+
+  if (editContactsList.length === 0) {
+    container.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted)">No contact numbers added yet. Click "+ Add Person / Number" above.</span>';
+    return;
+  }
+
+  container.innerHTML = editContactsList.map((contact, idx) => `
+    <div style="display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 8px; align-items: center;">
+      <input type="text" class="search-input-field edit-contact-name" value="${escapeHtml(contact.name || '')}" placeholder="Contact Name" oninput="editContactsList[${idx}].name = this.value" style="padding: 7px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 0.85rem;">
+      <input type="text" class="search-input-field edit-contact-phone" value="${escapeHtml(contact.phone || '')}" placeholder="WhatsApp / Phone (e.g. 012-345 6789)" oninput="editContactsList[${idx}].phone = this.value" style="padding: 7px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 0.85rem;">
+      <button type="button" class="action-btn" onclick="removeContactRowInEditModal(${idx})" style="padding: 6px 10px; color: var(--red); border-color: rgba(248,81,73,0.3); font-weight: bold;" title="Remove this person">✕</button>
+    </div>
+  `).join('');
+}
+
+function addContactRowInEditModal() {
+  if (!canManageBookingNumbers()) {
+    showToast('❌ Only Admin and Operator can add contacts.');
+    return;
+  }
+  editContactsList.push({ name: '', phone: '' });
+  renderEditContactsList();
+}
+
+function removeContactRowInEditModal(idx) {
+  if (editContactsList[idx]) {
+    editContactsList.splice(idx, 1);
+    renderEditContactsList();
+  }
+}
+
 function closeEditBookingModal() {
   const modal = document.getElementById('edit-booking-modal');
   if (modal) modal.style.display = 'none';
@@ -2897,6 +3008,11 @@ function closeEditBookingModal() {
 
 async function saveBookingEdit(event) {
   if (event) event.preventDefault();
+
+  if (!canManageBookingNumbers()) {
+    showToast('❌ Only Admin and Operator can save booking details.');
+    return;
+  }
 
   const key = document.getElementById('edit-booking-key').value;
   const rowIndex = parseInt(document.getElementById('edit-booking-row-index').value, 10);
@@ -2907,10 +3023,21 @@ async function saveBookingEdit(event) {
     saveBtn.textContent = 'Saving Overrides...';
   }
 
+  // Parse contacts
+  const validContacts = (editContactsList || [])
+    .map(c => ({ name: (c.name || '').trim(), phone: (c.phone || '').trim() }))
+    .filter(c => c.phone || c.name);
+
+  const phoneStr = validContacts.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
+
   const fields = {
     'NAME': document.getElementById('edit-field-name').value.trim(),
     'CODE': document.getElementById('edit-field-code').value.trim(),
     'PIC': document.getElementById('edit-field-pic').value.trim(),
+    'CONTACTS': validContacts,
+    'PHONE': phoneStr,
+    'CONTACT': phoneStr,
+    'WHATSAPP': phoneStr,
     'CHECK IN': document.getElementById('edit-field-checkin').value.trim(),
     'CHECK OUT': document.getElementById('edit-field-checkout').value.trim(),
     'STAYING DAYS': document.getElementById('edit-field-staying-days').value.trim(),
@@ -3362,4 +3489,423 @@ async function sendBoatReportToTelegram() {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─── WhatsApp Web Integration & Notice Board Picture Copy ────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+let currentWhatsAppBooking = null;
+let currentWhatsAppTemplate = 'greeting';
+let currentWhatsAppContacts = [];
+let currentWhatsAppSelectedContactIndex = 0;
+
+const WA_TEMPLATES = {
+  checkout: `Good Evening Dearest Customer, 
+
+*Tomorrow please check out from room by 8am and return the room key to reception counter*.
+
+Luggage please put at the platform under the big tree. (Inform reception counter staff for help carry the luggage if needed)
+
+Boat will depart 8.30am, please stay at yours table, our reception staff will call you when the boat is ready for depart.`,
+
+  greeting: `Good day Dearest Customer, here is *TenggolCoralBeachResort* Reception, any inquiries kindly WhatsApp to this number.
+
+Attached below is our website links for TCBR Guest Guide
+https://tcbresort.com.my
+
+*Please note that Karaoke and Pickleball court is currently unavailable.*
+
+*Regarding Towels*
+
+Room towels please use inside only .
+
+Beach/Dive Towel available at the Dive Center`
+};
+
+/**
+ * Normalizes phone numbers to WhatsApp international format.
+ * Automatically converts Malaysian 01x-xxx xxxx to 601xxxxxxxxx.
+ * Preserves international numbers like Singapore +6591234567 -> 6591234567.
+ */
+function normalizePhoneNumber(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  let cleaned = raw.replace(/[^\d+]/g, '').trim();
+  if (cleaned.startsWith('+')) cleaned = cleaned.substring(1);
+  if (!cleaned) return '';
+
+  // Malaysian format 01x -> 601x
+  if (cleaned.startsWith('01')) {
+    cleaned = '6' + cleaned;
+  } else if (cleaned.startsWith('0') && cleaned.length >= 9) {
+    cleaned = '6' + cleaned;
+  }
+  return cleaned;
+}
+
+/**
+ * Opens WhatsApp Modal for a booking by its row index.
+ * Optionally selects a specific contact by index.
+ */
+function openWhatsAppModalByIndex(rowIndex, selectedContactIndex = 0, event) {
+  if (event) event.stopPropagation();
+
+  let booking = (activeTab === 'bookings' ? currentBookings : allBookings).find(b => b && b.rowIndex === rowIndex);
+  if (!booking) {
+    booking = (allBookings || []).find(b => b && b.rowIndex === rowIndex) || (currentBookings || []).find(b => b && b.rowIndex === rowIndex);
+  }
+
+  if (!booking && allHistory) {
+    for (const h of allHistory) {
+      const match = (h.newRows || []).concat(h.modifiedRows || []).find(item => item && item.rowIndex === rowIndex);
+      if (match) { booking = match; break; }
+    }
+  }
+
+  const rowData = booking ? (booking.row || []) : [];
+  const name = rowData[3] || booking?.name || 'Dearest Customer';
+  const code = rowData[1] || booking?.code || '—';
+  const checkIn = rowData[7] || booking?.checkIn || '—';
+  const checkOut = rowData[8] || booking?.checkOut || '—';
+
+  // Extract multiple contacts
+  currentWhatsAppContacts = extractBookingContacts(booking, rowData, name);
+  if (currentWhatsAppContacts.length === 0) {
+    currentWhatsAppContacts = [{ name: name, phone: '' }];
+  }
+
+  currentWhatsAppSelectedContactIndex = (typeof selectedContactIndex === 'number' && selectedContactIndex >= 0 && selectedContactIndex < currentWhatsAppContacts.length)
+    ? selectedContactIndex
+    : 0;
+
+  currentWhatsAppBooking = {
+    rowIndex,
+    bookingKey: booking?.overrideMeta?.bookingKey || `ROW_${rowIndex}`,
+    name,
+    code,
+    checkIn,
+    checkOut,
+    booking
+  };
+
+  // Header display
+  const nameEl = document.getElementById('wa-guest-name');
+  if (nameEl) nameEl.textContent = name;
+  const codeEl = document.getElementById('wa-booking-code');
+  if (codeEl) codeEl.textContent = code;
+  const datesEl = document.getElementById('wa-stay-dates');
+  if (datesEl) datesEl.textContent = `${checkIn} ➔ ${checkOut}`;
+
+  // RBAC permission: only admin & operator can edit / save numbers
+  const canEdit = canManageBookingNumbers();
+  const saveBtn = document.getElementById('wa-save-phone-btn');
+  if (saveBtn) saveBtn.style.display = canEdit ? 'inline-block' : 'none';
+  const nameInput = document.getElementById('wa-contact-name-input');
+  const phoneInput = document.getElementById('wa-phone-input');
+  if (nameInput) nameInput.readOnly = !canEdit;
+  if (phoneInput) phoneInput.readOnly = !canEdit;
+
+  renderWhatsAppContactPicker();
+  selectWhatsAppContact(currentWhatsAppSelectedContactIndex);
+
+  // Default to greeting template
+  selectWhatsAppTemplate('greeting');
+
+  // Open modal
+  const modal = document.getElementById('whatsapp-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function renderWhatsAppContactPicker() {
+  const container = document.getElementById('wa-contact-picker-container');
+  const pillsEl = document.getElementById('wa-contact-pills');
+  const countTag = document.getElementById('wa-contacts-count-tag');
+  if (!container || !pillsEl) return;
+
+  const contacts = currentWhatsAppContacts || [];
+  if (countTag) countTag.textContent = `${contacts.length} contact${contacts.length === 1 ? '' : 's'}`;
+
+  // If there are multiple contacts or staff can add more, display picker
+  if (contacts.length > 1 || canManageBookingNumbers()) {
+    container.style.display = 'block';
+    const pillsHtml = contacts.map((c, idx) => {
+      const isSelected = idx === currentWhatsAppSelectedContactIndex;
+      const label = c.name ? `${c.name} (${c.phone || 'No phone'})` : (c.phone || `Person ${idx + 1}`);
+      return `
+        <button type="button" class="action-btn ${isSelected ? 'primary-action-btn' : ''}" onclick="selectWhatsAppContact(${idx})" style="font-size: 0.76rem; padding: 4px 10px; border-radius: 14px;">
+          👤 ${escapeHtml(label)}
+        </button>
+      `;
+    });
+
+    if (canManageBookingNumbers()) {
+      pillsHtml.push(`
+        <button type="button" class="action-btn" onclick="addNewContactInWhatsAppModal()" style="font-size: 0.76rem; padding: 4px 10px; border-radius: 14px; border-style: dashed; color: var(--accent);">
+          + Add Person
+        </button>
+      `);
+    }
+
+    pillsEl.innerHTML = pillsHtml.join(' ');
+  } else {
+    container.style.display = 'none';
+  }
+}
+
+function selectWhatsAppContact(idx) {
+  if (!currentWhatsAppContacts[idx]) {
+    idx = 0;
+  }
+  currentWhatsAppSelectedContactIndex = idx;
+  const contact = currentWhatsAppContacts[idx] || { name: '', phone: '' };
+
+  const nameInput = document.getElementById('wa-contact-name-input');
+  const phoneInput = document.getElementById('wa-phone-input');
+
+  if (nameInput) nameInput.value = contact.name || '';
+  if (phoneInput) phoneInput.value = contact.phone || '';
+
+  onWhatsAppPhoneChanged();
+  renderWhatsAppContactPicker();
+}
+
+function addNewContactInWhatsAppModal() {
+  if (!canManageBookingNumbers()) return;
+  currentWhatsAppContacts.push({ name: '', phone: '' });
+  selectWhatsAppContact(currentWhatsAppContacts.length - 1);
+  const nameInput = document.getElementById('wa-contact-name-input');
+  if (nameInput) nameInput.focus();
+}
+
+function onWhatsAppContactNameChanged() {
+  const nameInput = document.getElementById('wa-contact-name-input');
+  const val = nameInput ? nameInput.value.trim() : '';
+  if (currentWhatsAppContacts[currentWhatsAppSelectedContactIndex]) {
+    currentWhatsAppContacts[currentWhatsAppSelectedContactIndex].name = val;
+    renderWhatsAppContactPicker();
+  }
+}
+
+function closeWhatsAppModal() {
+  const modal = document.getElementById('whatsapp-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function onWhatsAppPhoneChanged() {
+  const phoneInput = document.getElementById('wa-phone-input');
+  const raw = phoneInput ? phoneInput.value.trim() : '';
+  if (currentWhatsAppContacts[currentWhatsAppSelectedContactIndex]) {
+    currentWhatsAppContacts[currentWhatsAppSelectedContactIndex].phone = raw;
+  }
+  const normalized = normalizePhoneNumber(raw);
+  const normEl = document.getElementById('wa-phone-normalized');
+  if (normEl) {
+    normEl.textContent = normalized ? `wa.me/${normalized}` : '— (Enter number)';
+    normEl.style.color = normalized ? 'var(--green)' : 'var(--text-muted)';
+  }
+}
+
+/**
+ * Toggle between 'greeting' (with picture) and 'checkout' (text only)
+ */
+function selectWhatsAppTemplate(type) {
+  currentWhatsAppTemplate = type;
+
+  const greetingBtn = document.getElementById('wa-tpl-greeting-btn');
+  const checkoutBtn = document.getElementById('wa-tpl-checkout-btn');
+  const pictureCard = document.getElementById('wa-picture-card');
+  const openWebBtn = document.getElementById('wa-open-web-btn');
+  const instructionsBanner = document.getElementById('wa-instructions-banner');
+  const messageText = document.getElementById('wa-message-text');
+
+  if (messageText) {
+    messageText.value = WA_TEMPLATES[type] || '';
+  }
+
+  if (type === 'greeting') {
+    if (greetingBtn) greetingBtn.className = 'action-btn primary-action-btn';
+    if (checkoutBtn) checkoutBtn.className = 'action-btn';
+    if (pictureCard) pictureCard.style.display = 'flex';
+    if (openWebBtn) openWebBtn.innerHTML = '⚡ Copy Picture & Open in WhatsApp Web ➔';
+    if (instructionsBanner) {
+      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button copies the resort notice picture and opens WhatsApp Web. In WhatsApp Web, simply press <b>Ctrl + V</b> to paste the notice board photo before hitting Send!';
+    }
+  } else {
+    if (greetingBtn) greetingBtn.className = 'action-btn';
+    if (checkoutBtn) checkoutBtn.className = 'action-btn primary-action-btn';
+    if (pictureCard) pictureCard.style.display = 'none';
+    if (openWebBtn) openWebBtn.innerHTML = '🚀 Open in WhatsApp Web ➔';
+    if (instructionsBanner) {
+      instructionsBanner.innerHTML = '<span style="color:var(--accent);font-weight:600">💡 How it works:</span> Clicking the button opens WhatsApp Web with the check-out reminder message pre-filled. Review and hit Send!';
+    }
+  }
+}
+
+/**
+ * Copies the resort notice board image (/tcbr-notice-board.jpg) to the clipboard.
+ * Enables the user to press Ctrl+V directly in WhatsApp Web.
+ */
+async function copyNoticeBoardImageToClipboard() {
+  const btn = document.getElementById('wa-copy-img-btn');
+  const originalText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Copying Picture...';
+  }
+
+  try {
+    const imgUrl = '/tcbr-notice-board.jpg';
+    const response = await fetch(imgUrl);
+    if (!response.ok) throw new Error('Could not fetch notice board image');
+    const blob = await response.blob();
+
+    // Standard browser ClipboardItem requires image/png
+    const img = new Image();
+    const imageLoaded = new Promise((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = reject;
+      img.src = URL.createObjectURL(blob);
+    });
+    await imageLoaded;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': pngBlob })
+      ]);
+      showToast('✅ Notice board picture copied! Press Ctrl+V in WhatsApp to paste.');
+      if (btn) btn.innerHTML = '✅ Copied to Clipboard!';
+      setTimeout(() => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      }, 2500);
+      return true;
+    } else {
+      showToast('⚠️ Clipboard image copy not supported in this browser. Please download or drag the image.');
+    }
+  } catch (err) {
+    console.error('Failed to copy notice picture to clipboard:', err);
+    showToast('⚠️ Could not copy picture to clipboard: ' + err.message);
+  } finally {
+    if (btn && btn.disabled) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
+  }
+  return false;
+}
+
+/**
+ * Copies message text only to clipboard.
+ */
+function copyWhatsAppMessageOnly() {
+  const text = document.getElementById('wa-message-text')?.value || '';
+  if (!text) return;
+  copyTextToClipboard(text, '✅ Message text copied to clipboard!');
+}
+
+/**
+ * Saves customer contacts and phone numbers directly from the WhatsApp modal into overrides.
+ * Restricted to admin and operator roles.
+ */
+async function saveWhatsAppPhoneDirect() {
+  if (!canManageBookingNumbers()) {
+    showToast('❌ Only Admin and Operator can add or edit customer numbers.');
+    return;
+  }
+  if (!currentWhatsAppBooking) return;
+
+  const rowIndex = currentWhatsAppBooking.rowIndex;
+  const key = currentWhatsAppBooking.bookingKey || `ROW_${rowIndex}`;
+
+  // Make sure current active inputs are recorded
+  const nameInput = document.getElementById('wa-contact-name-input');
+  const phoneInput = document.getElementById('wa-phone-input');
+  if (currentWhatsAppContacts[currentWhatsAppSelectedContactIndex]) {
+    currentWhatsAppContacts[currentWhatsAppSelectedContactIndex].name = nameInput ? nameInput.value.trim() : '';
+    currentWhatsAppContacts[currentWhatsAppSelectedContactIndex].phone = phoneInput ? phoneInput.value.trim() : '';
+  }
+
+  const validContacts = (currentWhatsAppContacts || []).filter(c => c.phone || c.name);
+  const phoneStr = validContacts.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
+
+  try {
+    const res = await authFetch('/api/admin/bookings/override', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingKey: key,
+        rowIndex,
+        fields: {
+          'CONTACTS': validContacts,
+          'PHONE': phoneStr,
+          'CONTACT': phoneStr,
+          'WHATSAPP': phoneStr
+        }
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast('✅ Customer contact numbers saved to booking!');
+      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      renderWhatsAppContactPicker();
+      await loadData(true);
+    } else {
+      showToast('❌ Failed to save: ' + (data.error || 'Unknown error'));
+    }
+  } catch (err) {
+    console.error('Error saving contacts from WhatsApp modal:', err);
+    showToast('❌ Network error saving contacts.');
+  }
+}
+
+/**
+ * Dispatches message via WhatsApp Web (or WhatsApp mobile app).
+ * Automatically copies notice board picture to clipboard if Greeting template is active.
+ */
+async function dispatchWhatsAppWeb() {
+  const phoneInput = document.getElementById('wa-phone-input');
+  const rawPhone = phoneInput ? phoneInput.value.trim() : '';
+  const normalized = normalizePhoneNumber(rawPhone);
+
+  if (!normalized || normalized.length < 8) {
+    showToast('⚠️ Please enter a valid customer phone number first!');
+    if (phoneInput) phoneInput.focus();
+    return;
+  }
+
+  const msgText = document.getElementById('wa-message-text')?.value || '';
+
+  // If greeting template is active, copy the notice board picture to clipboard
+  if (currentWhatsAppTemplate === 'greeting') {
+    try {
+      await copyNoticeBoardImageToClipboard();
+    } catch (e) {
+      console.warn('Auto copy notice image skipped:', e);
+    }
+  }
+
+  // Construct WhatsApp Web URL
+  const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const waUrl = isMobile
+    ? `https://wa.me/${normalized}?text=${encodeURIComponent(msgText)}`
+    : `https://web.whatsapp.com/send?phone=${normalized}&text=${encodeURIComponent(msgText)}`;
+
+  window.open(waUrl, '_blank');
+
+  if (currentWhatsAppTemplate === 'greeting') {
+    showToast('🚀 Opened WhatsApp Web! Press Ctrl+V to paste the notice board photo.');
+  } else {
+    showToast('🚀 Opened WhatsApp Web!');
+  }
+}
+
 

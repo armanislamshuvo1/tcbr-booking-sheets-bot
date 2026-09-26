@@ -517,8 +517,8 @@ app.post('/api/admin/snapshot/reset', requireAuth, requireAdmin, admin.resetSnap
 app.get('/api/admin/export/:type', requireAuth, requireAdmin, admin.exportData);
 app.get('/api/admin/audit-logs', requireAuth, requireAdmin, admin.getAuditLogsHandler);
 
-// Admin Dashboard Booking Overrides APIs
-app.put('/api/admin/bookings/override', requireAuth, requireAdmin, admin.updateBookingOverride);
+// Dashboard Booking Overrides APIs (Accessible to Admin & Operator)
+app.put('/api/admin/bookings/override', requireAuth, requireRole('admin', 'operator'), admin.updateBookingOverride);
 app.delete('/api/admin/bookings/override', requireAuth, requireAdmin, admin.revertBookingOverride);
 
 // Admin Boat Transfer Report APIs

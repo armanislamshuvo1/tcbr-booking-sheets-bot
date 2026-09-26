@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/styles.css" />
-  <script src="/js/app.js?v=4" defer></script>
+  <script src="/js/app.js?v=8" defer></script>
 </head>
 <body>
 
@@ -778,6 +778,21 @@
           </div>
         </div>
 
+        <div style="margin-bottom: 16px; background: var(--bg-primary); border: 1px solid var(--border); padding: 14px 16px; border-radius: var(--radius-sm);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div>
+              <strong style="font-size: 0.82rem; color: var(--text-primary); display: block;">Customer Contacts (Names & WhatsApp Numbers)</strong>
+              <span style="font-size: 0.72rem; color: var(--text-secondary);">Add multiple phone numbers with individual guest/companion names</span>
+            </div>
+            <button type="button" id="edit-add-contact-btn" class="action-btn" onclick="addContactRowInEditModal()" style="font-size: 0.75rem; padding: 4px 10px; background: rgba(88,166,255,0.15); color: var(--accent); border-color: rgba(88,166,255,0.3);">
+              + Add Person / Number
+            </button>
+          </div>
+          <div id="edit-contacts-list" style="display: flex; flex-direction: column; gap: 8px;">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Check In Date</label>
@@ -866,6 +881,123 @@
         </div>
       </form>
     </div>
+  </div>
+</div>
+
+<!-- ── WhatsApp Message Dispatch Modal ── -->
+<div id="whatsapp-modal" class="modal-overlay" style="display: none; z-index: 9700; background: rgba(13, 17, 23, 0.85); backdrop-filter: blur(8px);">
+  <div style="width: 90%; max-width: 640px; max-height: 90vh; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 16px 36px rgba(0,0,0,0.6);">
+    
+    <!-- Modal Header -->
+    <div style="padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 1.4rem;">💬</span>
+        <div>
+          <h4 style="font-size: 1.05rem; font-weight: 700; color: var(--text-primary); margin: 0;">Send WhatsApp Message</h4>
+          <span style="font-size: 0.75rem; color: var(--text-muted);" id="wa-modal-subtitle">Tenggol Coral Beach Resort</span>
+        </div>
+      </div>
+      <button onclick="closeWhatsAppModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer;">✕</button>
+    </div>
+
+    <!-- Modal Body -->
+    <div style="padding: 20px; overflow-y: auto; flex: 1;">
+      
+      <!-- Customer Info & Contacts Picker -->
+      <div style="background: var(--bg-primary); border: 1px solid var(--border); padding: 14px 16px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <div>
+            <strong id="wa-guest-name" style="font-size: 0.95rem; color: var(--text-primary);">Guest Name</strong>
+            <span id="wa-booking-code" class="badge" style="margin-left: 6px; background: var(--accent-glow); color: var(--accent);">CODE</span>
+          </div>
+          <span id="wa-stay-dates" style="font-size: 0.78rem; color: var(--text-secondary);">Dates</span>
+        </div>
+
+        <!-- Contact Pills Picker (if multiple contacts exist) -->
+        <div id="wa-contact-picker-container" style="display: none; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <label style="font-size: 0.74rem; font-weight: 600; color: var(--text-secondary);">Select Recipient Contact:</label>
+            <span id="wa-contacts-count-tag" style="font-size: 0.7rem; color: var(--accent);">0 contacts</span>
+          </div>
+          <div id="wa-contact-pills" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+        </div>
+
+        <!-- Active Contact Name & Number Inputs -->
+        <div>
+          <div style="display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 8px; align-items: flex-end;">
+            <div>
+              <label style="display: block; font-size: 0.74rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Recipient Name</label>
+              <input type="text" id="wa-contact-name-input" placeholder="e.g. Cherie Yong" style="width: 100%; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 0.85rem;" oninput="onWhatsAppContactNameChanged()">
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.74rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">WhatsApp Number</label>
+              <input type="text" id="wa-phone-input" placeholder="e.g. 012-345 6789 or +60 12-345 6789" style="width: 100%; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 0.85rem;" oninput="onWhatsAppPhoneChanged()">
+            </div>
+            <button type="button" id="wa-save-phone-btn" class="action-btn" onclick="saveWhatsAppPhoneDirect()" style="padding: 8px 12px; font-size: 0.78rem;" title="Save number to this booking">💾 Save</button>
+          </div>
+          <div id="wa-phone-hint" style="font-size: 0.74rem; color: var(--text-muted); margin-top: 6px;">WhatsApp Link: <span id="wa-phone-normalized" style="color: var(--green); font-family: monospace;">—</span></div>
+        </div>
+      </div>
+
+      <!-- Template Selection Tabs -->
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;">Choose Message Template:</label>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="wa-tpl-greeting-btn" class="action-btn primary-action-btn" onclick="selectWhatsAppTemplate('greeting')" style="flex: 1; justify-content: center; padding: 8px 10px; font-size: 0.82rem; font-weight: 600;">
+            🌴 Greeting (with Picture)
+          </button>
+          <button type="button" id="wa-tpl-checkout-btn" class="action-btn" onclick="selectWhatsAppTemplate('checkout')" style="flex: 1; justify-content: center; padding: 8px 10px; font-size: 0.82rem; font-weight: 600;">
+            🌅 Check-Out Notice
+          </button>
+        </div>
+      </div>
+
+      <!-- Message Textarea -->
+      <div style="margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Message Content (Editable):</label>
+          <button type="button" onclick="copyWhatsAppMessageOnly()" class="action-btn" style="padding: 2px 8px; font-size: 0.72rem;">📋 Copy Text Only</button>
+        </div>
+        <textarea id="wa-message-text" rows="8" style="width: 100%; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 0.85rem; line-height: 1.5; resize: vertical; outline: none;"></textarea>
+      </div>
+
+      <!-- Notice Board Picture Card (Visible ONLY for Greeting template) -->
+      <div id="wa-picture-card" style="background: rgba(46, 160, 67, 0.08); border: 1px solid rgba(46, 160, 67, 0.3); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 16px; display: flex; gap: 14px; align-items: center;">
+        <img src="/tcbr-notice-board.jpg" alt="TCBR Resort Notice Board" style="width: 64px; height: 84px; object-fit: cover; border-radius: 4px; border: 1px solid rgba(46, 160, 67, 0.4); cursor: pointer;" onclick="window.open('/tcbr-notice-board.jpg', '_blank')" title="Click to view full notice board">
+        <div style="flex: 1;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+            <strong style="font-size: 0.85rem; color: var(--green);">📸 Resort Notice Board Picture Attached</strong>
+            <span class="badge" style="background: rgba(46, 160, 67, 0.2); color: var(--green); font-size: 0.65rem;">Schedule & Activities</span>
+          </div>
+          <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0 0 8px; line-height: 1.4;">
+            Contains meal times, 8:00 AM check-out & 8:30 AM boat schedule, snorkeling tours, and resort activities.
+          </p>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="wa-copy-img-btn" class="action-btn" onclick="copyNoticeBoardImageToClipboard()" style="font-size: 0.75rem; padding: 4px 10px; background: rgba(46,160,67,0.15); color: var(--green); border-color: rgba(46,160,67,0.4);">
+              📋 Copy Picture to Clipboard
+            </button>
+            <a href="/tcbr-notice-board.jpg" target="_blank" class="action-btn" style="font-size: 0.75rem; padding: 4px 10px; text-decoration: none;">
+              🔍 View Picture
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick instructions banner -->
+      <div id="wa-instructions-banner" style="background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; font-size: 0.76rem; color: var(--text-muted); line-height: 1.4;">
+        <span style="color: var(--accent); font-weight: 600;">💡 How it works:</span> Clicking the button below opens WhatsApp Web with the text pre-filled. If the picture is attached, simply press <b>Ctrl + V</b> in WhatsApp Web to paste the photo before hitting Send!
+      </div>
+
+    </div>
+
+    <!-- Modal Footer Actions -->
+    <div style="padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; background: var(--bg-secondary);">
+      <button type="button" class="action-btn" onclick="closeWhatsAppModal()">Cancel</button>
+      <button type="button" id="wa-open-web-btn" class="action-btn primary-action-btn" onclick="dispatchWhatsAppWeb()" style="background: #25D366; border-color: #20ba5a; color: #fff; font-weight: 600; padding: 8px 18px;">
+        ⚡ Copy Picture & Open in WhatsApp Web ➔
+      </button>
+    </div>
+
   </div>
 </div>
 

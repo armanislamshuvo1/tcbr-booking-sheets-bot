@@ -202,6 +202,9 @@ const HEADER_ALIASES = {
   'ROOM TYPE': ['ROOM TYPE', 'ROOM_TYPE', 'ROOMTYPE'],
   'SPECIAL REQUEST': ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'REQUEST'],
   'GUEST_PAX': ['GUEST_PAX', 'GUESTS', 'PAX'],
+  'PHONE': ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'PHONE NUMBER', 'CONTACT NUMBER', 'HP', 'HANDPHONE'],
+  'CONTACT': ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'PHONE NUMBER', 'CONTACT NUMBER', 'HP', 'HANDPHONE'],
+  'WHATSAPP': ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'PHONE NUMBER', 'CONTACT NUMBER', 'HP', 'HANDPHONE'],
 };
 
 const FIXED_COLUMN_INDEX_MAPPINGS = {
@@ -323,12 +326,19 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
         overrideMeta: {
           updatedBy: override.updatedBy,
           updatedAt: override.updatedAt,
-          bookingKey
+          bookingKey,
+          fields: override.fields || {}
         }
       };
       if (override.fields?.GUEST_PAX) {
         const p = parseInt(override.fields.GUEST_PAX, 10);
         if (!isNaN(p) && p > 0) resEntry.pax = p;
+      }
+      if (override.fields?.CONTACTS) {
+        resEntry.contacts = override.fields.CONTACTS;
+      }
+      if (override.fields?.PHONE || override.fields?.CONTACT || override.fields?.WHATSAPP || override.fields?.TEL || override.fields?.MOBILE) {
+        resEntry.phone = (override.fields.PHONE || override.fields.CONTACT || override.fields.WHATSAPP || override.fields.TEL || override.fields.MOBILE || '').toString().trim();
       }
       return resEntry;
     } else if (Array.isArray(entry)) {
@@ -337,8 +347,15 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
       mergedRow.overrideMeta = {
         updatedBy: override.updatedBy,
         updatedAt: override.updatedAt,
-        bookingKey
+        bookingKey,
+        fields: override.fields || {}
       };
+      if (override.fields?.CONTACTS) {
+        mergedRow.contacts = override.fields.CONTACTS;
+      }
+      if (override.fields?.PHONE || override.fields?.CONTACT || override.fields?.WHATSAPP || override.fields?.TEL || override.fields?.MOBILE) {
+        mergedRow.phone = (override.fields.PHONE || override.fields.CONTACT || override.fields.WHATSAPP || override.fields.TEL || override.fields.MOBILE || '').toString().trim();
+      }
       return mergedRow;
     }
 
