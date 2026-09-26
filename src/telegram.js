@@ -138,8 +138,24 @@ async function deleteMessage(chatId, messageId) {
 const EXCLUDED_HEADERS = [
   'ROW_COLOR',
   'TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS',
-  'ROOM TYPE', 'STAYING DAYS', 'SHARING', 'ROOM SHARING'
+  'ROOM TYPE', 'STAYING DAYS', 'SHARING', 'ROOM SHARING',
+  'PHONE', 'PHONE NO', 'PHONE NO.', 'PHONE NUMBER', 'PHONE NUMBERS',
+  'CONTACT', 'CONTACT NO', 'CONTACT NO.', 'CONTACT NUMBER', 'CONTACT NUMBERS',
+  'MOBILE', 'MOBILE NO', 'MOBILE NO.', 'MOBILE NUMBER',
+  'TEL', 'TEL NO', 'TEL NO.', 'TELEPHONE',
+  'HP', 'H/P', 'HP NO', 'H/P NO', 'HANDPHONE',
+  'WHATSAPP', 'WHATSAPP NO', 'NO TEL', 'NO TELEFON',
+  'CUSTOMER NUMBER', 'CUSTOMER PHONE', 'GUEST PHONE', 'GUEST CONTACT'
 ];
+
+function isExcludedTelegramHeader(header) {
+  if (!header || typeof header !== 'string') return false;
+  const h = header.toUpperCase().trim();
+  if (EXCLUDED_HEADERS.includes(h)) return true;
+  if (/\b(CONTACT|PHONE|MOBILE|HANDPHONE|WHATSAPP|TELEPHONE)\b/i.test(h)) return true;
+  if (/^(HP|H\/P|TEL)(\s*(NO|NUM|NUMBER|\.))?$/i.test(h)) return true;
+  return false;
+}
 
 /**
  * Format a row's data as a compact HTML list using headers.
@@ -150,7 +166,7 @@ function formatRow(row, headers) {
       const val = (row[i] || '').toString().trim();
       if (!val) return null;
       const headerUpper = header.toUpperCase().trim();
-      if (EXCLUDED_HEADERS.includes(headerUpper)) return null;
+      if (isExcludedTelegramHeader(headerUpper)) return null;
       return `  • <b>${escapeHtml(header)}:</b> ${escapeHtml(val)}`;
     })
     .filter(Boolean)
@@ -167,7 +183,7 @@ function formatModifiedRow(row, headers, changes) {
       const val = (row[i] || '').toString().trim();
       if (!val) return null;
       const headerUpper = header.toUpperCase().trim();
-      if (EXCLUDED_HEADERS.includes(headerUpper)) return null;
+      if (isExcludedTelegramHeader(headerUpper)) return null;
       const isChanged = changedColumns.has(header);
       const marker = isChanged ? ' 🟡 (changed)' : '';
       return `  • <b>${escapeHtml(header)}${marker}:</b> ${escapeHtml(val)}`;
@@ -219,6 +235,21 @@ async function sendTelegramAlert({ newRows = [], modifiedRows = [], error = null
   const config = await loadBotConfig();
   const resortName = config?.resortName || 'TCBR';
 
+  // Filter modified rows to exclude contact / phone / payment changes
+  const validModifiedRows = [];
+  for (const entry of (modifiedRows || [])) {
+    const filteredChanges = (entry.changes || []).filter(c => !isExcludedTelegramHeader(c.column.toUpperCase().trim()));
+    if (filteredChanges.length > 0) {
+      validModifiedRows.push({ ...entry, changes: filteredChanges });
+    }
+  }
+
+  // If no new rows and no actionable modified rows remain after exclusion, suppress Telegram notification
+  if (newRows.length === 0 && validModifiedRows.length === 0) {
+    console.log('   ℹ️  sendTelegramAlert: no actionable changes after column exclusion, skipping notification.');
+    return null;
+  }
+
   parts.push(
     (offlineHeader ? offlineHeader + '\n' : '') +
     `📊 <b>${escapeHtml(resortName)} — ${escapeHtml(monthName)}</b>\n` +
@@ -240,13 +271,12 @@ async function sendTelegramAlert({ newRows = [], modifiedRows = [], error = null
   }
 
   // ── Modified rows ─────────────────────────────────────────────────────────
-  if (modifiedRows.length > 0) {
-    parts.push(`\n\n🟡 <b>${modifiedRows.length} Modified Row(s) This Month:</b>`);
-    for (const entry of modifiedRows.slice(0, 10)) {
-      const filteredChanges = entry.changes.filter(c => !EXCLUDED_HEADERS.includes(c.column.toUpperCase().trim()));
-      const fullRowText = formatModifiedRow(entry.row, entry.headers, filteredChanges);
+  if (validModifiedRows.length > 0) {
+    parts.push(`\n\n🟡 <b>${validModifiedRows.length} Modified Row(s) This Month:</b>`);
+    for (const entry of validModifiedRows.slice(0, 10)) {
+      const fullRowText = formatModifiedRow(entry.row, entry.headers, entry.changes);
       
-      const changesText = filteredChanges
+      const changesText = entry.changes
         .map(c =>
           `  • <b>${escapeHtml(c.column)}:</b>\n` +
           `    ❌ Was: ${escapeHtml(c.before) || '(empty)'}\n` +
@@ -263,8 +293,8 @@ async function sendTelegramAlert({ newRows = [], modifiedRows = [], error = null
         `<b>📋 Full Row Data:</b>\n${fullRowText}${changesSection}`
       );
     }
-    if (modifiedRows.length > 10) {
-      parts.push(`\n  ... and ${modifiedRows.length - 10} more modified rows.`);
+    if (validModifiedRows.length > 10) {
+      parts.push(`\n  ... and ${validModifiedRows.length - 10} more modified rows.`);
     }
   }
 

@@ -251,6 +251,27 @@ function buildCurrentMonthMap(rows, referenceDate = new Date()) {
   return map;
 }
 
+const EXCLUDED_DETECTION_COLUMNS = [
+  'TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS',
+  'ROW_COLOR',
+  'PHONE', 'PHONE NO', 'PHONE NO.', 'PHONE NUMBER', 'PHONE NUMBERS',
+  'CONTACT', 'CONTACT NO', 'CONTACT NO.', 'CONTACT NUMBER', 'CONTACT NUMBERS',
+  'MOBILE', 'MOBILE NO', 'MOBILE NO.', 'MOBILE NUMBER',
+  'TEL', 'TEL NO', 'TEL NO.', 'TELEPHONE',
+  'HP', 'H/P', 'HP NO', 'H/P NO', 'HANDPHONE',
+  'WHATSAPP', 'WHATSAPP NO', 'NO TEL', 'NO TELEFON',
+  'CUSTOMER NUMBER', 'CUSTOMER PHONE', 'GUEST PHONE', 'GUEST CONTACT'
+];
+
+function isExcludedFromDetection(colUpper) {
+  if (!colUpper || typeof colUpper !== 'string') return false;
+  const upper = colUpper.toUpperCase().trim();
+  if (EXCLUDED_DETECTION_COLUMNS.includes(upper)) return true;
+  if (/\b(CONTACT|PHONE|MOBILE|HANDPHONE|WHATSAPP|TELEPHONE)\b/i.test(upper)) return true;
+  if (/^(HP|H\/P|TEL)(\s*(NO|NUM|NUMBER|\.))?$/i.test(upper)) return true;
+  return false;
+}
+
 /**
  * Main change detection function.
  *
@@ -286,8 +307,8 @@ function detectChanges(rows, prevSnapshot) {
         if (before !== after) {
           const colName = headers[col] || `Col ${col + 1}`;
           const colUpper = colName.toString().toUpperCase().trim();
-          // Exclude payment details columns from change detection
-          if (['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'].includes(colUpper)) {
+          // Exclude payment details and contact number columns from change detection
+          if (isExcludedFromDetection(colUpper)) {
             continue;
           }
           changes.push({
