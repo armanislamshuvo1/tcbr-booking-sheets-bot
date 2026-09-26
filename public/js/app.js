@@ -127,8 +127,16 @@ function showToast(msg) {
 }
 
 // ── RBAC & Contacts Helpers ──
-function canManageBookingNumbers() {
+function isViewerRole(role) {
+  return role === 'jetty_staff' || role === 'dc';
+}
+
+function canAccessContacts() {
   return currentUser && (currentUser.role === 'admin' || currentUser.role === 'operator');
+}
+
+function canManageBookingNumbers() {
+  return canAccessContacts();
 }
 
 /**
@@ -235,7 +243,7 @@ function applyDashboardData(data) {
 // ── Load data from API with localStorage caching ────────────────────────────
 async function loadData(forceRefresh = false) {
   const btn = document.getElementById('refresh-btn');
-  const isJetty = currentUser && currentUser.role === 'jetty_staff';
+  const isViewer = currentUser && isViewerRole(currentUser.role);
   const roleCacheKey = `${DASHBOARD_CACHE_KEY}_${currentUser?.role || 'anon'}`;
 
   // Check localStorage cache first if not a forced refresh
@@ -265,14 +273,16 @@ async function loadData(forceRefresh = false) {
     let currentBookingsData = { headers: [], bookings: [] };
     let allBookingsData = { headers: [], bookings: [] };
 
-    if (isJetty) {
-      // Jetty staff only loads current bookings & status (avoids forbidden 403 endpoints)
-      const [statusRes, currentBookingsRes] = await Promise.all([
+    if (isViewer) {
+      // Viewer roles (Jetty staff & DC) load current bookings, all bookings & status (avoids forbidden 403 /api/history)
+      const [statusRes, currentBookingsRes, allBookingsRes] = await Promise.all([
         authFetch(`/api/status${ts}`),
         authFetch(`/api/current-bookings${ts}`),
+        authFetch(`/api/all-bookings${ts}`),
       ]);
       status = await statusRes.json();
       currentBookingsData = await currentBookingsRes.json();
+      allBookingsData = await allBookingsRes.json();
     } else {
       // Admin & Operator load full history and all bookings
       const [historyRes, statusRes, currentBookingsRes, allBookingsRes] = await Promise.all([
@@ -312,13 +322,13 @@ async function loadData(forceRefresh = false) {
 
 // ── Update stat cards ───────────────────────────────────────────────────────
 function updateStats(status) {
-  const isJetty = currentUser && currentUser.role === 'jetty_staff';
+  const isViewer = currentUser && isViewerRole(currentUser.role);
   const statTotalEl = document.getElementById('stat-total');
   const statNewEl = document.getElementById('stat-new');
   const statModEl = document.getElementById('stat-modified');
   const statErrEl = document.getElementById('stat-errors');
 
-  if (isJetty) {
+  if (isViewer) {
     if (statTotalEl) statTotalEl.textContent = currentBookings.length;
     return;
   }
@@ -339,8 +349,8 @@ function updateStats(status) {
 
 // ── Tab switcher ────────────────────────────────────────────────────────────
 function setTab(tabName) {
-  // Enforce Jetty Staff role constraint: can ONLY view 'bookings'
-  if (currentUser && currentUser.role === 'jetty_staff' && tabName !== 'bookings') {
+  // Enforce viewer roles constraint (Jetty Staff & DC): can ONLY view 'bookings' and 'allbookings'
+  if (currentUser && isViewerRole(currentUser.role) && !['bookings', 'allbookings'].includes(tabName)) {
     tabName = 'bookings';
   }
   activeTab = tabName;
@@ -786,7 +796,7 @@ function updateInHouseStats(targetDate) {
   if (statInhouseSubEl) statInhouseSubEl.textContent = `${totalBookingsInHouse} booking${totalBookingsInHouse !== 1 ? 's' : ''} (${dateLabel})`;
   
   if (inHouseBadgeEl) {
-    if (currentUser && currentUser.role === 'jetty_staff') {
+    if (currentUser && isViewerRole(currentUser.role)) {
       inHouseBadgeEl.style.display = 'none';
     } else {
       inHouseBadgeEl.textContent = `🏠 ${totalPax} In-House Guests (${dateLabel})`;
@@ -1571,7 +1581,7 @@ function buildBookingCard(booking, idx) {
   }
 
   const canEditNumbers = canManageBookingNumbers();
-  const contactsList = extractBookingContacts(booking, rowData, name);
+  const contactsList = canAccessContacts() ? extractBookingContacts(booking, rowData, name) : [];
   const contactsSummary = contactsList.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
 
   // Fields requested by user to display in detail table
@@ -1594,11 +1604,11 @@ function buildBookingCard(booking, idx) {
     { key: 'REMARK', val: remarkVal },
   ];
 
-  if (contactsSummary) {
+  if (canAccessContacts() && contactsSummary) {
     fields.splice(3, 0, { key: 'PHONE / WHATSAPP', val: contactsSummary });
   }
 
-  // RBAC: ONLY Admin will see payment details (hidden from operator and jetty_staff)
+  // RBAC: ONLY Admin will see payment details (hidden from operator, jetty_staff, and dc)
   const canSeePayments = currentUser && currentUser.role === 'admin';
   if (canSeePayments) {
     const totalIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'TOTAL AMOUNT');
@@ -1634,10 +1644,14 @@ function buildBookingCard(booking, idx) {
     ? `<button class="action-btn" onclick="revertBookingOverrideDirect('${escapeHtml(String(booking.overrideMeta?.bookingKey || ''))}', ${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:rgba(248,81,73,0.15);color:var(--red);border-color:rgba(248,81,73,0.4);font-weight:600">↩️ Revert to Sheet</button>`
     : '';
 
+  const waBtn = canAccessContacts()
+    ? `<button class="action-btn" onclick="openWhatsAppModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, 0, event)" style="background:rgba(37,211,102,0.15);color:#25D366;border-color:rgba(37,211,102,0.4);font-weight:600">💬 WhatsApp</button>`
+    : '';
+
   const canEditBooking = canEditNumbers;
   const cardActionBar = `
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
-      <button class="action-btn" onclick="openWhatsAppModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, 0, event)" style="background:rgba(37,211,102,0.15);color:#25D366;border-color:rgba(37,211,102,0.4);font-weight:600">💬 WhatsApp</button>
+      ${waBtn}
       <button class="action-btn" onclick="copyBookingDetails(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:var(--bg-primary);color:var(--text-primary);border-color:var(--border);font-weight:600">📋 Copy Details</button>
       ${revertBtn}
       ${canEditBooking
@@ -2159,6 +2173,11 @@ function setupUserUI(user) {
       roleTag.style.background = 'rgba(45, 212, 191, 0.15)';
       roleTag.style.color = '#2dd4bf';
       roleTag.style.border = '1px solid rgba(45, 212, 191, 0.4)';
+    } else if (userRole === 'dc') {
+      roleTag.textContent = 'DC';
+      roleTag.style.background = 'rgba(168, 85, 247, 0.15)';
+      roleTag.style.color = '#c084fc';
+      roleTag.style.border = '1px solid rgba(168, 85, 247, 0.4)';
     } else {
       roleTag.textContent = 'OPERATOR';
       roleTag.style.background = 'var(--accent-glow)';
@@ -2172,21 +2191,21 @@ function setupUserUI(user) {
 
   // Role-based visibility for Tabs, Actions & Stat Cards
   const statsGrid = document.querySelector('.stats-grid');
-  if (userRole === 'jetty_staff') {
+  if (isViewerRole(userRole)) {
     if (tabChangelog) tabChangelog.style.display = 'none';
     if (tabInhouse) tabInhouse.style.display = 'none';
-    if (tabAllBookings) tabAllBookings.style.display = 'none';
+    if (tabAllBookings) tabAllBookings.style.display = '';
     if (triggerBtn) triggerBtn.style.display = 'none';
 
     // Hide Change Log category filter bar
     const filterBar = document.getElementById('category-filters');
     if (filterBar) filterBar.style.display = 'none';
 
-    // Hide top stat cards blocks completely for jetty staff
+    // Hide top stat cards blocks completely for viewer roles (jetty_staff & dc)
     if (statsGrid) statsGrid.style.display = 'none';
 
-    // Default to Current Bookings tab
-    if (activeTab !== 'bookings') {
+    // Default to Current Bookings tab if currently on forbidden tabs
+    if (activeTab !== 'bookings' && activeTab !== 'allbookings') {
       setTab('bookings');
     }
   } else {
@@ -2296,6 +2315,7 @@ async function loadAdminUsers() {
             <select id="pending-role-${u.id}" class="search-input-field" style="padding: 4px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary);">
               <option value="operator" selected>Operator</option>
               <option value="jetty_staff">Jetty Staff</option>
+              <option value="dc">DC</option>
               <option value="admin">Admin</option>
             </select>
             <button class="action-btn" onclick="approveUserAccount('${u.id}', '${escapeHtml(u.username)}')" style="background:var(--green-bg); color:var(--green); border-color:rgba(63,185,80,0.3); font-size:0.78rem; padding:5px 10px; font-weight:600;">✓ Approve</button>
@@ -2315,12 +2335,14 @@ async function loadAdminUsers() {
         let badgeStyle = 'background:var(--accent-glow);color:var(--accent);';
         if (u.role === 'admin') badgeStyle = 'background:var(--red-bg);color:var(--red);';
         if (u.role === 'jetty_staff') badgeStyle = 'background:rgba(45,212,191,0.15);color:#2dd4bf;';
+        if (u.role === 'dc') badgeStyle = 'background:rgba(168,85,247,0.15);color:#c084fc;';
         roleHtml = `<span class="badge" style="font-size:0.7rem; text-transform:uppercase; ${badgeStyle}">${escapeHtml(u.role)}</span>`;
       } else {
         roleHtml = `
           <select class="search-input-field" onchange="changeUserRole('${u.id}', this.value, '${escapeHtml(u.username)}')" style="padding: 3px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); cursor: pointer;">
             <option value="operator" ${u.role === 'operator' ? 'selected' : ''}>Operator</option>
             <option value="jetty_staff" ${u.role === 'jetty_staff' ? 'selected' : ''}>Jetty Staff</option>
+            <option value="dc" ${u.role === 'dc' ? 'selected' : ''}>DC</option>
             <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
           </select>
         `;
@@ -3548,6 +3570,7 @@ function normalizePhoneNumber(raw) {
  */
 function openWhatsAppModalByIndex(rowIndex, selectedContactIndex = 0, event) {
   if (event) event.stopPropagation();
+  if (!canAccessContacts()) return;
 
   let booking = (activeTab === 'bookings' ? currentBookings : allBookings).find(b => b && b.rowIndex === rowIndex);
   if (!booking) {

@@ -66,7 +66,7 @@ async function createUser(req, res) {
       return res.status(400).json({ error: `Username "${cleanUsername}" is already taken.` });
     }
 
-    const validRoles = ['admin', 'operator', 'jetty_staff'];
+    const validRoles = ['admin', 'operator', 'jetty_staff', 'dc'];
     const assignedRole = validRoles.includes(role) ? role : 'operator';
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -123,7 +123,7 @@ async function approveUser(req, res) {
     }
 
     user.approved = true;
-    if (role && ['admin', 'operator', 'jetty_staff'].includes(role)) {
+    if (role && ['admin', 'operator', 'jetty_staff', 'dc'].includes(role)) {
       user.role = role;
     }
     await saveUsers(users);
@@ -149,7 +149,7 @@ async function updateUserRole(req, res) {
   try {
     const { userId } = req.params;
     const { role } = req.body || {};
-    const validRoles = ['admin', 'operator', 'jetty_staff'];
+    const validRoles = ['admin', 'operator', 'jetty_staff', 'dc'];
 
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: `Invalid role. Allowed roles: ${validRoles.join(', ')}.` });

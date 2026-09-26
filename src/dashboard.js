@@ -145,13 +145,24 @@ app.get('/api/status', async (req, res) => {
   });
 });
 
-function sanitizeFinancials(headers, bookings) {
+function sanitizeBookingsForRole(headers, bookings, role) {
+  if (role === 'admin') {
+    return { headers: headers || [], bookings: bookings || [] };
+  }
+
   const financialKeywords = ['TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS'];
+  const contactKeywords = ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'HP'];
+  const isViewer = role === 'jetty_staff' || role === 'dc';
+
   const hiddenIndices = new Set();
 
   const sanitizedHeaders = (headers || []).map((h, idx) => {
     const upper = (h || '').toString().trim().toUpperCase();
     if (financialKeywords.includes(upper)) {
+      hiddenIndices.add(idx);
+      return '';
+    }
+    if (isViewer && contactKeywords.includes(upper)) {
       hiddenIndices.add(idx);
       return '';
     }
@@ -165,16 +176,33 @@ function sanitizeFinancials(headers, bookings) {
         row[idx] = '';
       }
     });
-    return {
+
+    const bookingCopy = {
       ...b,
       row
     };
+
+    if (isViewer) {
+      delete bookingCopy.contacts;
+      delete bookingCopy.phone;
+      if (bookingCopy.overrideMeta && bookingCopy.overrideMeta.fields) {
+        const fieldsCopy = { ...bookingCopy.overrideMeta.fields };
+        contactKeywords.forEach(k => delete fieldsCopy[k]);
+        delete fieldsCopy.CONTACTS;
+        bookingCopy.overrideMeta = {
+          ...bookingCopy.overrideMeta,
+          fields: fieldsCopy
+        };
+      }
+    }
+
+    return bookingCopy;
   });
 
   return { headers: sanitizedHeaders, bookings: sanitizedBookings };
 }
 
-// Current month's active bookings (Accessible to Admin, Operator, and Jetty Staff)
+// Current month's active bookings (Accessible to Admin, Operator, Jetty Staff, and DC)
 app.get('/api/current-bookings', requireAuth, async (req, res) => {
   try {
     const snapshot = await loadSnapshot();
@@ -188,9 +216,9 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
     }));
     const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
 
-    // RBAC: ONLY admin can see payment/financial details. For operator and jetty_staff, sanitize them out.
-    if (req.user && req.user.role !== 'admin') {
-      const sanitized = sanitizeFinancials(snapshot.headers || [], bookings);
+    const userRole = req.user?.role || 'operator';
+    if (userRole !== 'admin') {
+      const sanitized = sanitizeBookingsForRole(snapshot.headers || [], bookings, userRole);
       return res.json(sanitized);
     }
 
@@ -204,8 +232,8 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
   }
 });
 
-// All bookings from Google Sheet snapshot (Admin & Operator only)
-app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator'), async (req, res) => {
+// All bookings from Google Sheet snapshot (Accessible to Admin, Operator, Jetty Staff, and DC)
+app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator', 'jetty_staff', 'dc'), async (req, res) => {
   try {
     const snapshot = await loadSnapshot();
     if (!snapshot) {
@@ -215,9 +243,9 @@ app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator'), asyn
     const rawBookings = snapshot.allRows || [];
     const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
 
-    // RBAC: ONLY admin can see payment/financial details. For operator, sanitize them out.
-    if (req.user && req.user.role !== 'admin') {
-      const sanitized = sanitizeFinancials(snapshot.headers || [], bookings);
+    const userRole = req.user?.role || 'operator';
+    if (userRole !== 'admin') {
+      const sanitized = sanitizeBookingsForRole(snapshot.headers || [], bookings, userRole);
       return res.json(sanitized);
     }
 
