@@ -554,8 +554,13 @@ function parsePaxString(str) {
 
 function parseSnorkPaxClient(str) {
   if (!str || typeof str !== 'string') return 0;
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
   if (!s) return 0;
+
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
+
   let total = 0;
 
   // 1. Identify Instructor / Ins
@@ -587,11 +592,49 @@ function parseSnorkPaxClient(str) {
 
 function parseDivingPaxClient(str) {
   if (!str || typeof str !== 'string') return 0;
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
   if (!s) return 0;
+
+  // Pre-clean non-pax keywords and tags
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
+  s = s.replace(/[+,&]?\s*refresher(?:\s*course)?(?:\s*(?:for|on)?\s*\d+\s*pax)?/gi, ' ');
+  s = s.replace(/\brefresher\b/gi, ' ');
+  s = s.replace(/\bpadi\s*aware\b/gi, ' ');
+  s = s.replace(/\bnitrox\b/gi, ' ');
+
+  // Remove dive count addons so they are not counted as additional pax
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
+
   let total = 0;
 
-  // 1. Identify Dive Master / DM
+  // 1. Match Adult with accompanying DM/Instructor role description, e.g. "1A accompanying DM/Instructor", "1A DM"
+  const adultRoleRegex = /(\d+)\s*A(?:\s*(?:accompanying\s+)?(?:dm|divemaster|dive\s*master|instructor|instructors|inst|ins)(?:\s*[\/&,]\s*(?:dm|divemaster|dive\s*master|instructor|instructors|inst|ins))?)?\b/gi;
+  let aMatch;
+  while ((aMatch = adultRoleRegex.exec(s)) !== null) {
+    total += parseInt(aMatch[1], 10);
+  }
+  s = s.replace(adultRoleRegex, ' ').trim();
+
+  // 2. Match standalone compound DM/Instructor pair, e.g. "1 DM/Instructor", "DM/Instructor"
+  const compoundDmInsRegex = /\+?\s*(\d*)\s*(?:dm|divemaster|dive\s*master)\s*[\/&,]\s*(?:instructor|instructors|inst|ins)\b/gi;
+  let cMatch;
+  while ((cMatch = compoundDmInsRegex.exec(s)) !== null) {
+    const count = cMatch[1] ? parseInt(cMatch[1], 10) : 1;
+    total += count;
+  }
+  s = s.replace(compoundDmInsRegex, ' ').trim();
+
+  const compoundInsDmRegex = /\+?\s*(\d*)\s*(?:instructor|instructors|inst|ins)\s*[\/&,]\s*(?:dm|divemaster|dive\s*master)\b/gi;
+  while ((cMatch = compoundInsDmRegex.exec(s)) !== null) {
+    const count = cMatch[1] ? parseInt(cMatch[1], 10) : 1;
+    total += count;
+  }
+  s = s.replace(compoundInsDmRegex, ' ').trim();
+
+  // 3. Match standalone Dive Master / DM
   const dmRegex = /\+?\s*(\d*)\s*(?:dm|divemaster|dive\s*master)\b/gi;
   let dmMatch;
   while ((dmMatch = dmRegex.exec(s)) !== null) {
@@ -600,7 +643,7 @@ function parseDivingPaxClient(str) {
   }
   s = s.replace(dmRegex, ' ').trim();
 
-  // 2. Identify Instructor / Ins
+  // 4. Match standalone Instructor
   const insRegex = /\+?\s*(\d*)\s*(?:i[nst]+[ruoc]*t[oers]{0,4}|ins|inst|instructor|instructors)\b/gi;
   let insMatch;
   while ((insMatch = insRegex.exec(s)) !== null) {
@@ -609,7 +652,7 @@ function parseDivingPaxClient(str) {
   }
   s = s.replace(insRegex, ' ').trim();
 
-  // 3. Match all "NUMBER A" patterns (e.g. "7A", "1A", "2 A") and remove them
+  // 5. Match standard "NUMBER A"
   const matchesA = Array.from(s.matchAll(/(\d+)\s*A(?=\s|$|[^A-Za-z])/gi));
   for (const m of matchesA) {
     total += parseInt(m[1], 10);
@@ -621,35 +664,29 @@ function parseDivingPaxClient(str) {
     s = s.replace(/\bA\b/i, ' ').trim();
   }
 
-  // 4. Match C/Child/Jr Diver/Junior patterns and remove them
+  // 6. Match C/Child/Jr Diver/Junior patterns and remove them
   const matchesC = Array.from(s.matchAll(/(\d+)\s*(?:C\b|child|kid|jr|junior)/gi));
   for (const m of matchesC) {
     total += parseInt(m[1], 10);
   }
   s = s.replace(/(\d+)\s*(?:C\b|child|kid|jr|junior)[a-z-]*/gi, ' ').trim();
 
-  // 5. Match Baby patterns and remove them
+  // 7. Match Baby patterns and remove them
   const matchesB = Array.from(s.matchAll(/(\d+)\s*Baby\b/gi));
   for (const m of matchesB) {
     total += parseInt(m[1], 10);
   }
   s = s.replace(/(\d+)\s*Baby\b/gi, ' ').trim();
 
-  // Remove dive count addons so they are not counted as additional pax
-  // (e.g. "+ 3 boat dive", "+ 3 Boat Fun Dive", "+ 3 boat", "+ 5 dives")
-  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
-  if (total > 0) {
-    s = s.replace(diveCountRegex, ' ').trim();
-  } else {
-    // If no divers found yet, remove qualified dive counts like "3 boat dive", "+ 4 dives"
-    s = s.replace(/[+,&]\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)/gi, ' ').trim();
-    s = s.replace(/\d+\s+(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+(?:dives?|boats?|trips?)/gi, ' ').trim();
-  }
+  // Clean up any remaining dive counts
+  s = s.replace(diveCountRegex, ' ').trim();
 
-  // 6. Check for remaining numbers in the text (e.g., bare numbers "2", "5 dives", or other diver titles)
-  const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
-  for (const m of remainingNumbers) {
-    total += parseInt(m[1], 10);
+  // 8. Check for remaining bare numbers ONLY IF no pax found yet
+  if (total === 0) {
+    const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
+    for (const m of remainingNumbers) {
+      total += parseInt(m[1], 10);
+    }
   }
 
   return total;
@@ -657,7 +694,12 @@ function parseDivingPaxClient(str) {
 
 function parseCoursePaxClient(str) {
   if (!str || typeof str !== 'string') return 0;
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
+
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
+
   // Clean up any extra dive count or free boat dive text
   // e.g. "+ 3 Boat Fun Dive", "+ 3 boat dive", "+ 3 boat", "+ 4 Dives", "Free 1 boat dive each", "free 1 boat dives"
   const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
@@ -3023,6 +3065,17 @@ function removeContactRowInEditModal(idx) {
   }
 }
 
+function resetEditRoomField() {
+  const roomField = document.getElementById('edit-field-room');
+  if (roomField) {
+    roomField.value = '';
+    roomField.placeholder = 'Using live Google Sheets calendar assignment';
+    if (typeof showToast === 'function') {
+      showToast('🔄 Room will follow Google Sheets calendar tab automatically.');
+    }
+  }
+}
+
 function closeEditBookingModal() {
   const modal = document.getElementById('edit-booking-modal');
   if (modal) modal.style.display = 'none';
@@ -3051,6 +3104,8 @@ async function saveBookingEdit(event) {
     .filter(c => c.phone || c.name);
 
   const phoneStr = validContacts.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
+  const roomInputVal = document.getElementById('edit-field-room').value.trim();
+  const roomPaxInputVal = document.getElementById('edit-field-roompax').value.trim();
 
   const fields = {
     'NAME': document.getElementById('edit-field-name').value.trim(),
@@ -3067,11 +3122,9 @@ async function saveBookingEdit(event) {
     'SNORKELLING': document.getElementById('edit-field-snorkeling').value.trim(),
     'DIVING': document.getElementById('edit-field-diving').value.trim(),
     'COURSE': document.getElementById('edit-field-course').value.trim(),
-    'ROOM': document.getElementById('edit-field-room').value.trim(),
     'ROOM TYPE': document.getElementById('edit-field-roomtype').value.trim(),
     'ROOM_TYPE': document.getElementById('edit-field-roomtype').value.trim(),
     'GUEST_PAX': document.getElementById('edit-field-guestpax').value.trim(),
-    'ROOM_PAX': document.getElementById('edit-field-roompax').value.trim(),
     'TOTAL AMOUNT': document.getElementById('edit-field-total').value.trim(),
     'DEPOSIT': document.getElementById('edit-field-deposit').value.trim(),
     'BALANCE': document.getElementById('edit-field-balance').value.trim(),
@@ -3079,6 +3132,12 @@ async function saveBookingEdit(event) {
     'SPECIAL REQUEST': document.getElementById('edit-field-special-request').value.trim(),
     'REMARK': document.getElementById('edit-field-remark').value.trim()
   };
+
+  // Only override ROOM if user specified a non-empty value; if left empty, let live calendar assign it
+  if (roomInputVal) {
+    fields['ROOM'] = roomInputVal;
+    if (roomPaxInputVal) fields['ROOM_PAX'] = roomPaxInputVal;
+  }
 
   try {
     const res = await authFetch('/api/admin/bookings/override', {

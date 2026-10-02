@@ -46,8 +46,13 @@ function parsePax(str) {
   if (!str || typeof str !== 'string') return { a: 0, c: 0, b: 0 };
 
   // 1. Remove parenthetical text (e.g. dive counts, age notes) to ignore its numeric data
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
   if (!s) return { a: 0, c: 0, b: 0 };
+
+  // Pre-clean non-pax keywords
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
 
   let adults = 0;
   let children = 0;
@@ -92,15 +97,52 @@ function parsePax(str) {
 function parseDivingPax(str) {
   if (!str || typeof str !== 'string') return { a: 0, c: 0, b: 0 };
 
-  // 1. Remove parenthetical text (e.g. dive counts)
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  // 1. Remove parenthetical text (e.g. dive counts, ages)
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
   if (!s) return { a: 0, c: 0, b: 0 };
+
+  // 2. Pre-clean non-pax keywords and tags
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
+  s = s.replace(/[+,&]?\s*refresher(?:\s*course)?(?:\s*(?:for|on)?\s*\d+\s*pax)?/gi, ' ');
+  s = s.replace(/\brefresher\b/gi, ' ');
+  s = s.replace(/\bpadi\s*aware\b/gi, ' ');
+  s = s.replace(/\bnitrox\b/gi, ' ');
+
+  // Remove dive count addons so they are not counted as additional pax
+  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
+  s = s.replace(diveCountRegex, ' ').trim();
 
   let adults = 0;
   let children = 0;
   let babies = 0;
 
-  // 2. Identify Dive Master / DM entries
+  // 3. Match Adult with accompanying DM/Instructor role description, e.g. "1A accompanying DM/Instructor", "1A DM"
+  const adultRoleRegex = /(\d+)\s*A(?:\s*(?:accompanying\s+)?(?:dm|divemaster|dive\s*master|instructor|instructors|inst|ins)(?:\s*[\/&,]\s*(?:dm|divemaster|dive\s*master|instructor|instructors|inst|ins))?)?\b/gi;
+  let aMatch;
+  while ((aMatch = adultRoleRegex.exec(s)) !== null) {
+    adults += parseInt(aMatch[1], 10);
+  }
+  s = s.replace(adultRoleRegex, ' ').trim();
+
+  // 4. Match standalone compound DM/Instructor pair, e.g. "1 DM/Instructor", "DM/Instructor"
+  const compoundDmInsRegex = /\+?\s*(\d*)\s*(?:dm|divemaster|dive\s*master)\s*[\/&,]\s*(?:instructor|instructors|inst|ins)\b/gi;
+  let cMatch;
+  while ((cMatch = compoundDmInsRegex.exec(s)) !== null) {
+    const count = cMatch[1] ? parseInt(cMatch[1], 10) : 1;
+    adults += count;
+  }
+  s = s.replace(compoundDmInsRegex, ' ').trim();
+
+  const compoundInsDmRegex = /\+?\s*(\d*)\s*(?:instructor|instructors|inst|ins)\s*[\/&,]\s*(?:dm|divemaster|dive\s*master)\b/gi;
+  while ((cMatch = compoundInsDmRegex.exec(s)) !== null) {
+    const count = cMatch[1] ? parseInt(cMatch[1], 10) : 1;
+    adults += count;
+  }
+  s = s.replace(compoundInsDmRegex, ' ').trim();
+
+  // 5. Match standalone Dive Master / DM
   const dmRegex = /\+?\s*(\d*)\s*(?:dm|divemaster|dive\s*master)\b/gi;
   let dmMatch;
   while ((dmMatch = dmRegex.exec(s)) !== null) {
@@ -110,7 +152,7 @@ function parseDivingPax(str) {
   }
   s = s.replace(dmRegex, ' ').trim();
 
-  // 3. Identify "instructor" entries and categorize them as Adult (A) (handles typos)
+  // 6. Match standalone Instructor
   const instructorRegex = /\+?\s*(\d*)\s*(?:i[nst]+[ruoc]*t[oers]{0,4}|ins|inst|instructor|instructors)\b/gi;
   let instructorMatch;
   while ((instructorMatch = instructorRegex.exec(s)) !== null) {
@@ -120,7 +162,7 @@ function parseDivingPax(str) {
   }
   s = s.replace(instructorRegex, ' ').trim();
 
-  // 4. Match all "NUMBER A" patterns (e.g. "7A", "1A", "2 A") and remove them
+  // 7. Match any remaining standard A
   const matchesA = Array.from(s.matchAll(/(\d+)\s*A(?=\s|$|[^A-Za-z])/gi));
   for (const m of matchesA) {
     adults += parseInt(m[1], 10);
@@ -132,35 +174,29 @@ function parseDivingPax(str) {
     s = s.replace(/\bA\b/i, ' ').trim();
   }
 
-  // 5. Match C/Child/Jr Diver/Junior patterns and remove them
+  // 8. Match C/Child/Jr Diver/Junior patterns and remove them
   const matchesC = Array.from(s.matchAll(/(\d+)\s*(?:C\b|child|kid|jr|junior)/gi));
   for (const m of matchesC) {
     children += parseInt(m[1], 10);
   }
   s = s.replace(/(\d+)\s*(?:C\b|child|kid|jr|junior)[a-z-]*/gi, ' ').trim();
 
-  // 6. Match Baby patterns and remove them
+  // 9. Match Baby patterns and remove them
   const matchesB = Array.from(s.matchAll(/(\d+)\s*Baby\b/gi));
   for (const m of matchesB) {
     babies += parseInt(m[1], 10);
   }
   s = s.replace(/(\d+)\s*Baby\b/gi, ' ').trim();
 
-  // Remove dive count addons so they are not counted as additional pax
-  // (e.g. "+ 3 boat dive", "+ 3 Boat Fun Dive", "+ 3 boat", "+ 5 dives")
-  const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;
-  if (adults > 0 || children > 0 || babies > 0) {
-    s = s.replace(diveCountRegex, ' ').trim();
-  } else {
-    // If no divers found yet, remove qualified dive counts like "3 boat dive", "+ 4 dives"
-    s = s.replace(/[+,&]\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)/gi, ' ').trim();
-    s = s.replace(/\d+\s+(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+(?:dives?|boats?|trips?)/gi, ' ').trim();
-  }
+  // Clean up any remaining dive counts
+  s = s.replace(diveCountRegex, ' ').trim();
 
-  // 7. Check for remaining numbers in the text (e.g., bare numbers "2", "5 dives", or other diver titles)
-  const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
-  for (const m of remainingNumbers) {
-    adults += parseInt(m[1], 10);
+  // 10. Check for remaining bare numbers ONLY IF no pax found yet
+  if (adults === 0 && children === 0 && babies === 0) {
+    const remainingNumbers = Array.from(s.matchAll(/(\d+)/g));
+    for (const m of remainingNumbers) {
+      adults += parseInt(m[1], 10);
+    }
   }
 
   return { a: adults, c: children, b: babies };
@@ -183,7 +219,12 @@ function parseCoursePax(str) {
   if (!str || typeof str !== 'string') return { a: 0, c: 0, b: 0 };
   
   // Clean up parenthetical text (e.g. "(12 years old)", "(5 Dives)", "(age 14)")
-  let s = str.replace(/\([^)]*\)/g, '').trim();
+  let s = str.replace(/\([^)]*\)/g, ' ').trim();
+  // Pre-clean non-pax keywords and tags
+  s = s.replace(/\binsta\s*360(?:\s*workshop)?\b/gi, ' ');
+  s = s.replace(/\b360\s*workshop\b/gi, ' ');
+  s = s.replace(/\b(?:gopro|camera|workshop)\b/gi, ' ');
+
   // Clean up any extra dive count or free boat dive text
   // e.g. "+ 3 Boat Fun Dive", "+ 3 boat dive", "+ 3 boat", "+ 4 Dives", "Free 1 boat dive each", "free 1 boat dives"
   const diveCountRegex = /[+,&]?\s*(?:free|extra|added|add|with|w\/|inc|incl|including)?\s*\d+\s*(?:(?:boat|fun|leisure|shore|night|check|orientation|extra|additional|free)\s+)*(?:dives?|boats?|trips?)(?:\s*(?:each|after\s*certif\w*|paid(?:\s*at\s*\w+)?|only|per\s*pax|for\s*each\s*pax))?/gi;

@@ -826,7 +826,10 @@
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
-            <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Allocation</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">Room Allocation</label>
+              <button type="button" onclick="resetEditRoomField()" style="background: none; border: none; color: var(--accent); font-size: 0.72rem; cursor: pointer; padding: 0; text-decoration: underline;" title="Clear manual override to use live Google Sheets calendar assignment">🔄 Use Calendar Room</button>
+            </div>
             <input type="text" id="edit-field-room" placeholder="e.g. S101 (3 Pax), V102 (2 Pax)" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
           </div>
           <div>
