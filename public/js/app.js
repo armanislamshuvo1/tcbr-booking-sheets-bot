@@ -726,8 +726,8 @@ function getRowActivityPaxClient(rowData) {
   return parseSnorkPaxClient(snork) + parseDivingPaxClient(dive) + parseCoursePaxClient(course);
 }
 
-// ── In-House Guests Calculation ──────────────────────────────────
-function updateInHouseStats(targetDate) {
+// ── In-House Guests Calculation Helper (Single Source of Truth) ─────────────
+function getInHouseBookings(targetDate) {
   const tDate = targetDate ? new Date(targetDate) : new Date();
   tDate.setHours(0, 0, 0, 0);
 
@@ -739,6 +739,7 @@ function updateInHouseStats(targetDate) {
   const remarkIdx = bookingsHeaders.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
   const specialReqIdx = bookingsHeaders.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
   const codeIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+  const nameIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
 
   const bookingsByCode = {};
 
@@ -772,59 +773,75 @@ function updateInHouseStats(targetDate) {
 
     if (isInHouse) {
       const rawCode = (codeIdx !== -1 && rowData[codeIdx]) ? rowData[codeIdx].toString().trim().toUpperCase() : '';
-      const rIndex = item.rowIndex !== undefined ? item.rowIndex : index;
-      const codeKey = rawCode ? rawCode : `ROW_${rIndex}`;
+      const rIndex = item.rowIndex || index + 1;
+      const codeKey = rawCode ? `${rawCode}_${rIndex}` : `ROW_${rIndex}`;
 
       if (!bookingsByCode[codeKey]) {
         bookingsByCode[codeKey] = {
           code: rawCode,
+          name: (nameIdx !== -1 && rowData[nameIdx]) ? rowData[nameIdx].toString().trim() : '',
+          row: rowData,
+          rowIndex: rIndex,
           totalActivityPax: 0,
-          roomsMap: {}
+          roomPax: 0,
+          roomStr: (roomIdx !== -1 && rowData[roomIdx]) ? rowData[roomIdx].toString().trim() : '—'
         };
       }
 
       bookingsByCode[codeKey].totalActivityPax = Math.max(bookingsByCode[codeKey].totalActivityPax, getRowActivityPaxClient(rowData));
-
-      const roomStr = roomIdx !== -1 ? (rowData[roomIdx] || '') : '';
-      if (roomStr && roomStr !== '—') {
-        const cleanStr = roomStr.toString().replace(/➔/g, ',').replace(/\([^)]*changed[^)]*\)/gi, '');
-        const parts = cleanStr.split(',');
-        parts.forEach(part => {
-          const p = part.trim();
-          if (!p) return;
-          const match = p.match(/([A-Z0-9]+)\s*(?:\((\d+)\s*Pax\))?/i);
-          if (match) {
-            const roomName = match[1].toUpperCase();
-            const pax = match[2] ? parseInt(match[2], 10) : 1;
-            bookingsByCode[codeKey].roomsMap[roomName] = Math.max(bookingsByCode[codeKey].roomsMap[roomName] || 0, pax);
-          }
-        });
+      if (roomPaxIdx !== -1 && rowData[roomPaxIdx] && rowData[roomPaxIdx] !== '—') {
+        const parsedPax = parsePaxString(rowData[roomPaxIdx].toString());
+        if (parsedPax > 0 && bookingsByCode[codeKey].roomPax === 0) {
+          bookingsByCode[codeKey].roomPax = parsedPax;
+        }
       }
     }
   });
 
+  const list = [];
   let totalPax = 0;
-  let totalBookingsInHouse = 0;
 
   for (const key in bookingsByCode) {
     const group = bookingsByCode[key];
-    totalBookingsInHouse++;
-
     let pax = 1;
     if (group.totalActivityPax > 0) {
       pax = group.totalActivityPax;
-    } else {
-      let roomPaxSum = 0;
-      for (const rName in group.roomsMap) {
-        roomPaxSum += group.roomsMap[rName];
-      }
-      if (roomPaxSum > 0) {
-        pax = roomPaxSum;
-      }
+    } else if (group.roomPax > 0) {
+      pax = group.roomPax;
     }
 
+    const rowData = group.row;
+    const code = group.code;
+    const name = group.name;
+    const checkIn = (checkInIdx !== -1 ? rowData[checkInIdx] : rowData[7]) || '—';
+    const checkOut = (checkOutIdx !== -1 ? rowData[checkOutIdx] : rowData[8]) || '—';
+    const stayDays = rowData[9] || '—';
+    const snork = rowData[4] || '';
+    const dive = rowData[5] || '';
+    const course = rowData[6] || '';
+
     totalPax += pax;
+    list.push({
+      rowIndex: group.rowIndex,
+      code: code || '—',
+      name: name || 'Unassigned',
+      checkIn,
+      checkOut,
+      stayDays,
+      snork,
+      dive,
+      course,
+      roomStr: group.roomStr,
+      pax
+    });
   }
+
+  return { list, totalPax, totalBookings: list.length, targetDate: tDate };
+}
+
+// ── In-House Guests Counter (Top Card & Badges) ──────────────────
+function updateInHouseStats(targetDate) {
+  const { totalPax, totalBookings, targetDate: tDate } = getInHouseBookings(targetDate);
 
   const statInhouseEl = document.getElementById('stat-inhouse');
   const statInhouseSubEl = document.getElementById('stat-inhouse-sub');
@@ -835,7 +852,7 @@ function updateInHouseStats(targetDate) {
   const dateLabel = isToday ? `Today (${dateFormatted})` : dateFormatted;
 
   if (statInhouseEl) statInhouseEl.textContent = `${totalPax} Pax`;
-  if (statInhouseSubEl) statInhouseSubEl.textContent = `${totalBookingsInHouse} booking${totalBookingsInHouse !== 1 ? 's' : ''} (${dateLabel})`;
+  if (statInhouseSubEl) statInhouseSubEl.textContent = `${totalBookings} booking${totalBookings !== 1 ? 's' : ''} (${dateLabel})`;
   
   if (inHouseBadgeEl) {
     if (currentUser && isViewerRole(currentUser.role)) {
@@ -1814,121 +1831,23 @@ window.addEventListener('appinstalled', (evt) => {
 
 // ── Render In-House Guests List View ─────────────────────────────────────────
 function renderInHouseList(container, searchQuery, targetDateInput, badgeCountEl) {
-  const tDate = targetDateInput ? new Date(targetDateInput) : new Date();
-  tDate.setHours(0, 0, 0, 0);
+  const { list: allInHouse, totalPax: unfilteredPax, targetDate: tDate } = getInHouseBookings(targetDateInput);
 
-  const bookingsList = (allBookings && allBookings.length > 0) ? allBookings : currentBookings;
-  const roomPaxIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
-  const roomIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
-  const checkInIdx = bookingsHeaders.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN'].includes(h.toString().trim().toUpperCase()));
-  const checkOutIdx = bookingsHeaders.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'].includes(h.toString().trim().toUpperCase()));
-  const remarkIdx = bookingsHeaders.findIndex(h => h && ['REMARK', 'REMARKS'].includes(h.toString().trim().toUpperCase()));
-  const specialReqIdx = bookingsHeaders.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
-  const codeIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
-  const nameIdx = bookingsHeaders.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
+  let list = allInHouse;
+  let totalPax = unfilteredPax;
 
-  const bookingsByCode = {};
-
-  bookingsList.forEach((item, index) => {
-    const rowData = item.row || [];
-    const remarkVal = (remarkIdx !== -1 ? (rowData[remarkIdx] || '') : (rowData[22] || '')).toString().toLowerCase();
-    const specialReqVal = (specialReqIdx !== -1 ? (rowData[specialReqIdx] || '') : (rowData[13] || '')).toString().toLowerCase();
-    const combinedVal = `${remarkVal} ${specialReqVal}`;
-
-    if (isCancelledText(combinedVal) || isPostponedText(combinedVal)) {
-      return;
-    }
-
-    const checkIn = parseClientDate(rowData[checkInIdx !== -1 ? checkInIdx : 7]);
-    const checkOut = parseClientDate(rowData[checkOutIdx !== -1 ? checkOutIdx : 8]);
-    if (!checkIn) return;
-
-    const cIn = new Date(checkIn); cIn.setHours(0, 0, 0, 0);
-    let cOut = checkOut ? new Date(checkOut) : new Date(cIn); cOut.setHours(0, 0, 0, 0);
-
-    let isInHouse = false;
-    if (cOut > cIn) {
-      isInHouse = (tDate >= cIn && tDate < cOut);
-    } else {
-      isInHouse = (tDate.getTime() === cIn.getTime());
-    }
-
-    if (isInHouse) {
-      const rawCode = (codeIdx !== -1 && rowData[codeIdx]) ? rowData[codeIdx].toString().trim().toUpperCase() : '';
-      const rIndex = item.rowIndex || index + 1;
-      const codeKey = rawCode ? `${rawCode}_${rIndex}` : `ROW_${rIndex}`;
-
-      if (!bookingsByCode[codeKey]) {
-        bookingsByCode[codeKey] = {
-          code: rawCode,
-          name: (nameIdx !== -1 && rowData[nameIdx]) ? rowData[nameIdx].toString().trim() : '',
-          row: rowData,
-          rowIndex: rIndex,
-          totalActivityPax: 0,
-          roomPax: 0,
-          roomStr: (roomIdx !== -1 && rowData[roomIdx]) ? rowData[roomIdx].toString().trim() : '—'
-        };
-      }
-
-      bookingsByCode[codeKey].totalActivityPax = Math.max(bookingsByCode[codeKey].totalActivityPax, getRowActivityPaxClient(rowData));
-      if (roomPaxIdx !== -1 && rowData[roomPaxIdx] && rowData[roomPaxIdx] !== '—') {
-        const parsedPax = parsePaxString(rowData[roomPaxIdx].toString());
-        if (parsedPax > 0 && bookingsByCode[codeKey].roomPax === 0) {
-          bookingsByCode[codeKey].roomPax = parsedPax;
-        }
-      }
-    }
-  });
-
-  const list = [];
-  let totalPax = 0;
-
-  for (const key in bookingsByCode) {
-    const group = bookingsByCode[key];
-    let pax = 1;
-    if (group.totalActivityPax > 0) {
-      pax = group.totalActivityPax;
-    } else if (group.roomPax > 0) {
-      pax = group.roomPax;
-    }
-
-    const rowData = group.row;
-    const code = group.code;
-    const name = group.name;
-    const checkIn = (checkInIdx !== -1 ? rowData[checkInIdx] : rowData[7]) || '—';
-    const checkOut = (checkOutIdx !== -1 ? rowData[checkOutIdx] : rowData[8]) || '—';
-    const stayDays = rowData[9] || '—';
-    const snork = rowData[4] || '';
-    const dive = rowData[5] || '';
-    const course = rowData[6] || '';
-
-    // Search filter check
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchCode = code.toLowerCase().includes(q);
-      const matchName = name.toLowerCase().includes(q);
-      const matchCheckIn = checkIn.toLowerCase().includes(q);
-      const matchCheckOut = checkOut.toLowerCase().includes(q);
-      const matchRoom = group.roomStr.toLowerCase().includes(q);
-      if (!matchCode && !matchName && !matchCheckIn && !matchCheckOut && !matchRoom) {
-        continue;
-      }
-    }
-
-    totalPax += pax;
-    list.push({
-      rowIndex: group.rowIndex,
-      code: code || '—',
-      name: name || 'Unassigned',
-      checkIn,
-      checkOut,
-      stayDays,
-      snork,
-      dive,
-      course,
-      roomStr: group.roomStr,
-      pax
+  // Search filter check
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    list = allInHouse.filter(item => {
+      const matchCode = (item.code || '').toLowerCase().includes(q);
+      const matchName = (item.name || '').toLowerCase().includes(q);
+      const matchCheckIn = (item.checkIn || '').toLowerCase().includes(q);
+      const matchCheckOut = (item.checkOut || '').toLowerCase().includes(q);
+      const matchRoom = (item.roomStr || '').toLowerCase().includes(q);
+      return matchCode || matchName || matchCheckIn || matchCheckOut || matchRoom;
     });
+    totalPax = list.reduce((sum, item) => sum + item.pax, 0);
   }
 
   const dateFormatted = tDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });

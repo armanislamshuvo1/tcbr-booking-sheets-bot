@@ -389,7 +389,7 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       if (isInHouse) {
         const rawCode = (codeIdx !== -1 && row[codeIdx]) ? row[codeIdx].toString().trim().toUpperCase() : '';
         const rIndex = item.rowIndex !== undefined ? item.rowIndex : i;
-        const codeKey = rawCode ? rawCode : `ROW_${rIndex}`;
+        const codeKey = rawCode ? `${rawCode}_${rIndex}` : `ROW_${rIndex}`;
 
         if (!bookingsByCode[codeKey]) {
           bookingsByCode[codeKey] = {
@@ -397,28 +397,19 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
             firstRow: row,
             firstRowIndex: rIndex,
             totalActivityPax: 0,
-            roomsMap: {},
+            roomPax: 0,
             isOverridden: !!item.isOverridden,
             overrideMeta: item.overrideMeta
           };
         }
 
         bookingsByCode[codeKey].totalActivityPax = Math.max(bookingsByCode[codeKey].totalActivityPax, getRowActivityPax(row));
-
-        const roomStr = roomIdx !== -1 ? (row[roomIdx] || '') : '';
-        if (roomStr && roomStr !== '—') {
-          const cleanStr = roomStr.toString().replace(/➔/g, ',').replace(/\([^)]*changed[^)]*\)/gi, '');
-          const parts = cleanStr.split(',');
-          parts.forEach(part => {
-            const p = part.trim();
-            if (!p) return;
-            const match = p.match(/([A-Z0-9]+)\s*(?:\((\d+)\s*Pax\))?/i);
-            if (match) {
-              const roomName = match[1].toUpperCase();
-              const pax = match[2] ? parseInt(match[2], 10) : 1;
-              bookingsByCode[codeKey].roomsMap[roomName] = Math.max(bookingsByCode[codeKey].roomsMap[roomName] || 0, pax);
-            }
-          });
+        if (roomPaxIdx !== -1 && row[roomPaxIdx] && row[roomPaxIdx] !== '—') {
+          const p = parsePax(row[roomPaxIdx].toString());
+          const parsedPax = (p.a || 0) + (p.c || 0) + (p.b || 0);
+          if (parsedPax > 0 && bookingsByCode[codeKey].roomPax === 0) {
+            bookingsByCode[codeKey].roomPax = parsedPax;
+          }
         }
       }
     }
@@ -432,14 +423,8 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       let pax = 1;
       if (group.totalActivityPax > 0) {
         pax = group.totalActivityPax;
-      } else {
-        let roomPaxSum = 0;
-        for (const rName in group.roomsMap) {
-          roomPaxSum += group.roomsMap[rName];
-        }
-        if (roomPaxSum > 0) {
-          pax = roomPaxSum;
-        }
+      } else if (group.roomPax > 0) {
+        pax = group.roomPax;
       }
 
       totalGuests += pax;
