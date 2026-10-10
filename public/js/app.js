@@ -2225,7 +2225,7 @@ function closeAdminPortal() {
 }
 
 function setAdminTab(tabName) {
-  const tabs = ['users', 'bot', 'tg', 'data', 'telem', 'audit', 'boat'];
+  const tabs = ['users', 'bot', 'tg', 'data', 'telem', 'audit', 'boat', 'housekeeping'];
   tabs.forEach(t => {
     const btn = document.getElementById(`adm-tab-${t}`);
     const panel = document.getElementById(`adm-panel-${t}`);
@@ -2238,6 +2238,7 @@ function setAdminTab(tabName) {
   else if (tabName === 'telem') loadTelemetryData();
   else if (tabName === 'audit') loadAuditLogsUI();
   else if (tabName === 'boat') initBoatReportUI();
+  else if (tabName === 'housekeeping') initHousekeepingReportUI();
 }
 
 
@@ -3953,6 +3954,248 @@ async function dispatchWhatsAppWeb() {
     showToast('🚀 Opened WhatsApp Web! Press Ctrl+V to paste the notice board photo.');
   } else {
     showToast('🚀 Opened WhatsApp Web!');
+  }
+}
+
+// ── Admin: Housekeeping Room List Report Generator ──
+
+function initHousekeepingReportUI() {
+  const startInput = document.getElementById('hk-start-date');
+  const endInput = document.getElementById('hk-end-date');
+
+  if (startInput && !startInput.value) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    startInput.value = todayStr;
+    if (endInput && !endInput.value) {
+      endInput.value = todayStr;
+    }
+    fetchHousekeepingReportPreview();
+  }
+}
+
+function applyHousekeepingReportPreset(preset) {
+  const startInput = document.getElementById('hk-start-date');
+  const endInput = document.getElementById('hk-end-date');
+  if (!startInput || !endInput) return;
+
+  const today = new Date();
+  const formatDate = (d) => d.toISOString().split('T')[0];
+
+  if (preset === 'today') {
+    startInput.value = formatDate(today);
+    endInput.value = formatDate(today);
+  } else if (preset === 'tomorrow') {
+    const tom = new Date(today);
+    tom.setDate(today.getDate() + 1);
+    startInput.value = formatDate(tom);
+    endInput.value = formatDate(tom);
+  } else if (preset === 'next3') {
+    const end = new Date(today);
+    end.setDate(today.getDate() + 2);
+    startInput.value = formatDate(today);
+    endInput.value = formatDate(end);
+  } else if (preset === 'next7') {
+    const end = new Date(today);
+    end.setDate(today.getDate() + 6);
+    startInput.value = formatDate(today);
+    endInput.value = formatDate(end);
+  }
+
+  fetchHousekeepingReportPreview();
+}
+
+async function fetchHousekeepingReportPreview() {
+  const container = document.getElementById('hk-report-preview-container');
+  const startInput = document.getElementById('hk-start-date');
+  const endInput = document.getElementById('hk-end-date');
+  const filterInput = document.getElementById('hk-filter-type');
+  const sortInput = document.getElementById('hk-sort-by');
+
+  if (!container) return;
+
+  const startDate = startInput?.value || new Date().toISOString().split('T')[0];
+  const endDate = endInput?.value || startDate;
+  const filterType = filterInput?.value || 'both';
+  const sortBy = sortInput?.value || 'natural';
+
+  container.innerHTML = `
+    <div style="text-align: center; padding: 40px; color: var(--text-secondary);">
+      <div class="spinner" style="margin: 0 auto 12px;"></div>
+      Generating housekeeping room list preview for ${startDate} to ${endDate}...
+    </div>
+  `;
+
+  try {
+    const res = await authFetch('/api/admin/reports/housekeeping/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate, filterType, sortBy })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to generate housekeeping report preview');
+    }
+
+    const { report, formattedMessages } = data;
+    const { summary, days } = report;
+
+    // Summary Metric Cards
+    let html = `
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px;">
+        <div style="background: var(--bg-primary); border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-sm);">
+          <span style="font-size: 0.75rem; color: var(--text-secondary);">Total Check-Out Rooms</span>
+          <div style="font-size: 1.4rem; font-weight: 700; color: var(--accent); margin-top: 2px;">${summary.totalCheckOuts} Rooms</div>
+        </div>
+        <div style="background: var(--bg-primary); border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-sm);">
+          <span style="font-size: 0.75rem; color: var(--text-secondary);">Total Check-In Rooms</span>
+          <div style="font-size: 1.4rem; font-weight: 700; color: var(--green); margin-top: 2px;">${summary.totalCheckIns} Rooms</div>
+        </div>
+        <div style="background: var(--bg-primary); border: 1px solid var(--border); padding: 14px; border-radius: var(--radius-sm);">
+          <span style="font-size: 0.75rem; color: var(--text-secondary);">Back-to-Back (b2b) Turnarounds</span>
+          <div style="font-size: 1.4rem; font-weight: 700; color: var(--yellow); margin-top: 2px;">${summary.totalB2B} Rooms</div>
+        </div>
+      </div>
+    `;
+
+    // Render Each Day Card
+    days.forEach((day, index) => {
+      const msgItem = formattedMessages[index] || {};
+      const b2bCount = day.checkOuts.filter(c => c.b2b).length;
+
+      html += `
+        <div style="background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 24px; overflow: hidden;">
+          <div style="padding: 12px 18px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <strong style="font-size: 0.95rem; color: var(--text-primary);">📅 Check Out ${escapeHtml(day.dayMonth)} (${day.dateStr})</strong>
+            <div style="display: flex; gap: 6px;">
+              <span class="badge" style="background: rgba(248,81,73,0.15); color: var(--accent);">Out: ${day.checkOuts.length}</span>
+              <span class="badge" style="background: rgba(46,160,67,0.15); color: var(--green);">In: ${day.checkIns.length}</span>
+              ${b2bCount > 0 ? `<span class="badge" style="background: rgba(210,153,34,0.15); color: var(--yellow);">b2b: ${b2bCount}</span>` : ''}
+            </div>
+          </div>
+
+          <div style="padding: 18px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 18px;">
+              
+              <!-- Check-Out Rooms List -->
+              <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px;">
+                <h5 style="font-size: 0.85rem; color: var(--accent); margin-bottom: 8px; font-weight: 600; display: flex; justify-content: space-between;">
+                  <span>📤 Check-Out Rooms (${day.checkOuts.length})</span>
+                </h5>
+                ${day.checkOuts.length === 0 ? `
+                  <div style="font-size: 0.8rem; color: var(--text-muted); padding: 6px 0;">Belum ada Check out</div>
+                ` : `
+                  <div style="display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto;">
+                    ${day.checkOuts.map(c => `
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-radius: 4px; background: var(--bg-primary); font-size: 0.82rem;">
+                        <span>
+                          <strong>${escapeHtml(c.room)}</strong>
+                          ${c.isShared && c.pax ? `<span style="color: var(--text-secondary); font-size: 0.78rem;"> - ${c.pax} pax</span>` : ''}
+                        </span>
+                        ${c.b2b ? `<span class="badge" style="background: rgba(210,153,34,0.2); color: var(--yellow); font-size: 0.7rem; font-weight: 700;">b2b</span>` : ''}
+                      </div>
+                    `).join('')}
+                  </div>
+                `}
+              </div>
+
+              <!-- Check-In Rooms List -->
+              <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px;">
+                <h5 style="font-size: 0.85rem; color: var(--green); margin-bottom: 8px; font-weight: 600;">
+                  📥 Check-In Rooms (${day.checkIns.length})
+                </h5>
+                ${day.checkIns.length === 0 ? `
+                  <div style="font-size: 0.8rem; color: var(--text-muted); padding: 6px 0;">Belum ada Check in</div>
+                ` : `
+                  <div style="display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto;">
+                    ${day.checkIns.map(c => `
+                      <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-radius: 4px; background: var(--bg-primary); font-size: 0.82rem;">
+                        <strong>${escapeHtml(c.room)}</strong>
+                        <span style="color: var(--text-secondary); font-size: 0.78rem;">- ${c.pax || 1} pax</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                `}
+              </div>
+
+            </div>
+
+            <!-- WhatsApp & Telegram Text Box -->
+            <div style="margin-top: 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);">💬 WhatsApp / Telegram Output Preview</span>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="action-btn" onclick="copyTextToClipboard(\`${escapeHtml(msgItem.whatsappText || '')}\`, 'Copied Housekeeping text for WhatsApp!')" style="padding: 2px 8px; font-size: 0.72rem;">
+                    📋 Copy for WhatsApp
+                  </button>
+                  <button type="button" class="action-btn" onclick="copyTextToClipboard(\`${escapeHtml(msgItem.telegramText || '')}\`, 'Copied Housekeeping text for Telegram!')" style="padding: 2px 8px; font-size: 0.72rem;">
+                    📱 Copy for Telegram
+                  </button>
+                </div>
+              </div>
+              <pre style="background: #0d1117; color: #e6edf3; padding: 12px; border-radius: 6px; border: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0;">${escapeHtml(msgItem.whatsappText || '')}</pre>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  } catch (err) {
+    console.error('❌ Error fetching housekeeping report preview:', err);
+    container.innerHTML = `
+      <div style="background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,81,73,0.3); padding: 16px; border-radius: var(--radius-sm); font-size: 0.85rem;">
+        ❌ Failed to load housekeeping report preview: ${escapeHtml(err.message)}
+      </div>
+    `;
+  }
+}
+
+async function sendHousekeepingReportToTelegram() {
+  const startInput = document.getElementById('hk-start-date');
+  const endInput = document.getElementById('hk-end-date');
+  const filterInput = document.getElementById('hk-filter-type');
+  const sortInput = document.getElementById('hk-sort-by');
+  const sendBtn = document.getElementById('send-hk-tg-btn');
+
+  const startDate = startInput?.value || new Date().toISOString().split('T')[0];
+  const endDate = endInput?.value || startDate;
+  const filterType = filterInput?.value || 'both';
+  const sortBy = sortInput?.value || 'natural';
+
+  const rangeLabel = startDate === endDate ? startDate : `${startDate} to ${endDate}`;
+  if (!confirm(`Are you sure you want to send Housekeeping Room List message(s) for ${rangeLabel} to the Telegram Housekeeping Channel?`)) {
+    return;
+  }
+
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = '⏳ Sending...';
+  }
+
+  try {
+    const res = await authFetch('/api/admin/reports/housekeeping/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate, filterType, sortBy })
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to send housekeeping report to Telegram.');
+    }
+
+    showToast(`✅ Housekeeping report sent to Telegram! (${data.sentCount} message(s) delivered)`);
+    alert(`✅ Success!\nHousekeeping report for ${rangeLabel} was posted to the Telegram housekeeping channel (${data.sentCount} message(s) sent).`);
+  } catch (err) {
+    console.error('❌ Error sending housekeeping report to Telegram:', err);
+    showToast(`❌ Error sending report: ${err.message}`);
+    alert(`❌ Failed to send housekeeping report to Telegram: ${err.message}`);
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = '📡 Send to TG';
+    }
   }
 }
 

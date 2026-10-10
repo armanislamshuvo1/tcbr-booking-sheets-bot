@@ -9,6 +9,7 @@ const { sendTelegramAlert, isTelegramDisabled } = require('./src/telegram');
 const { loadSnapshot, saveSnapshot, appendHistory, clearMonthData } = require('./src/snapshot');
 const { checkAndSend30DayReminders } = require('./src/reminders');
 const { sendWeeklyReport, affectsReportWindow, getChangedDates, buildReport, formatDayMessage } = require('./src/weeklyReport');
+const { buildHousekeepingReport, formatHousekeepingDayMessage, sendHousekeepingAutoReport, toKLDateString } = require('./src/housekeepingReport');
 const { isQuietHours, isReportQuietHours } = require('./src/quietHours');
 const { getOrLoadConfig } = require('./src/adminController');
 
@@ -29,6 +30,12 @@ let lastWeeklyReportTime = 0;
 let lastReportMessages = null; // { headerId, dateMessages: { "YYYY-MM-DD": msgId } }
 let pendingReportUpdate = false; // true when a report update was deferred due to quiet hours
 
+// Housekeeping report state
+const HK_CHAT_ID = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID || REPORT_CHAT_ID;
+let lastHousekeepingReportTime = 0;
+let lastHousekeepingMessages = null; // { dateMessages: { "YYYY-MM-DD": msgId }, dateHashes: { "YYYY-MM-DD": hash } }
+let pendingHousekeepingUpdate = false;
+
 // ─── Channel configuration logging ──────────────────────────────────────────
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const ADMIN_CHAT_ID = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -40,6 +47,7 @@ console.log(`   TELEGRAM NOTIFICATIONS:        ${isTelegramDisabled() ? '⚠️ 
 console.log(`   TELEGRAM_CHAT_ID:             ${CHAT_ID ? `${CHAT_ID.slice(0, 6)}...${CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
 console.log(`   TELEGRAM_ADMIN_CHAT_ID:       ${ADMIN_CHAT_ID ? `${ADMIN_CHAT_ID.slice(0, 6)}...${ADMIN_CHAT_ID.slice(-4)}` : 'ℹ️ NOT SET (Falling back to TELEGRAM_CHAT_ID)'}`);
 console.log(`   TELEGRAM_REPORT_CHAT_ID:      ${REPORT_CHAT_ID ? `${REPORT_CHAT_ID.slice(0, 6)}...${REPORT_CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
+console.log(`   TELEGRAM_HOUSEKEEPING_CHAT_ID:${HK_CHAT_ID ? `${HK_CHAT_ID.slice(0, 6)}...${HK_CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
 console.log(`   TELEGRAM_REMINDER_CHANNEL_ID: ${REMINDER_CHANNEL_ID ? `${REMINDER_CHANNEL_ID.slice(0, 6)}...${REMINDER_CHANNEL_ID.slice(-4)}` : '❌ NOT SET'}`);
 
 if (!REPORT_CHAT_ID) {
@@ -92,6 +100,12 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
     }
     if (previousSnapshot?.lastReportMessages) {
       lastReportMessages = previousSnapshot.lastReportMessages;
+    }
+    if (previousSnapshot?.lastHousekeepingReportTime) {
+      lastHousekeepingReportTime = previousSnapshot.lastHousekeepingReportTime;
+    }
+    if (previousSnapshot?.lastHousekeepingMessages) {
+      lastHousekeepingMessages = previousSnapshot.lastHousekeepingMessages;
     }
     if (forceReminders) {
       const remindersResult = await checkAndSend30DayReminders(rows, previousSnapshot);
@@ -212,8 +226,67 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
       }
     }
 
+    // 6b. Check if Housekeeping report needs to be updated (sheet changes, date window shifted, or content changed)
+    if (HK_CHAT_ID && !isInitialRun) {
+      const hasChanges = (newRows.length > 0 || modifiedRows.length > 0);
+      const hkNow = new Date();
+      const hkStartStr = toKLDateString(hkNow);
+      const hkEndDate = new Date(hkNow);
+      hkEndDate.setDate(hkNow.getDate() + 9);
+      const hkEndStr = toKLDateString(hkEndDate);
+
+      const hkReport = buildHousekeepingReport(rows, {
+        startDateStr: hkStartStr,
+        endDateStr: hkEndStr,
+        filterType: 'both',
+        sortBy: 'natural',
+      });
+
+      let hkContentChanged = false;
+      const lastHkHashes = lastHousekeepingMessages?.dateHashes || {};
+      for (const day of hkReport.days) {
+        const dayText = formatHousekeepingDayMessage(day, { format: 'whatsapp' });
+        const hash = crypto.createHash('md5').update(dayText).digest('hex');
+        if (lastHkHashes[day.dateStr] !== hash) {
+          hkContentChanged = true;
+          break;
+        }
+      }
+
+      const currentHkDates = hkReport.days.map(d => d.dateStr);
+      const lastHkDates = Object.keys(lastHousekeepingMessages?.dateMessages || {});
+      const hkDatesShifted = lastHkDates.length === 0 || currentHkDates.some(d => !lastHkDates.includes(d));
+
+      const { isQuiet, klHour } = isReportQuietHours();
+
+      if (isQuiet && !isManual) {
+        if (hkDatesShifted || hkContentChanged || (hasChanges && affectsReportWindow(newRows, modifiedRows))) {
+          pendingHousekeepingUpdate = true;
+        }
+        console.log(`   ℹ️ Skipping housekeeping report update check during quiet hours (${klHour}:00 KL time).`);
+      } else if (isManual || forceReminders || pendingHousekeepingUpdate || hkDatesShifted || hkContentChanged || (hasChanges && affectsReportWindow(newRows, modifiedRows))) {
+        const nowMs = Date.now();
+        const cooldownPassed = (nowMs - lastHousekeepingReportTime > REPORT_COOLDOWN_MS);
+
+        if (isManual || forceReminders || pendingHousekeepingUpdate || hkDatesShifted || hkContentChanged || cooldownPassed) {
+          try {
+            const changedDates = getChangedDates(newRows, modifiedRows);
+            console.log(`   🧹 Auto-updating Housekeeping Report on Telegram. Manual: ${isManual}, ContentChanged: ${hkContentChanged}, Dates shifted: ${hkDatesShifted}, Changed dates: ${changedDates.join(', ')}`);
+
+            const { messages } = await sendHousekeepingAutoReport(rows, HK_CHAT_ID, 'updated', lastHousekeepingMessages, changedDates);
+            lastHousekeepingReportTime = nowMs;
+            lastHousekeepingMessages = messages;
+            pendingHousekeepingUpdate = false;
+            console.log('   ✅ Housekeeping report auto-updated successfully on Telegram.');
+          } catch (hkErr) {
+            console.error('   ❌ Failed to auto-update housekeeping report:', hkErr.message);
+          }
+        }
+      }
+    }
+
     // 7. Save new snapshot
-    await saveSnapshot(rows, currentMonthRows, sentReminders, lastWeeklyReportTime, lastReportMessages);
+    await saveSnapshot(rows, currentMonthRows, sentReminders, lastWeeklyReportTime, lastReportMessages, lastHousekeepingMessages);
 
     // Reset error alerts state on success
     lastErrorAlertTime = 0;
@@ -290,6 +363,9 @@ cron.schedule('0 0 1 * *', async () => {
   lastWeeklyReportTime = 0;
   lastReportMessages = null;
   pendingReportUpdate = false;
+  lastHousekeepingReportTime = 0;
+  lastHousekeepingMessages = null;
+  pendingHousekeepingUpdate = false;
   console.log('   ✅ Monthly reset complete. Next check will establish a new baseline.');
 }, {
   timezone: 'Asia/Kuala_Lumpur'

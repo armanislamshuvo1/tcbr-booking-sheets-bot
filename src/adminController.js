@@ -779,6 +779,118 @@ async function sendBoatTransferReport(req, res) {
   }
 }
 
+/**
+ * Preview custom date housekeeping room list report.
+ */
+async function previewHousekeepingReport(req, res) {
+  try {
+    const { startDate, endDate, filterType, sortBy } = req.body;
+    const snapshot = await loadSnapshot();
+
+    let rawRows = snapshot?.allRows || [];
+    if (rawRows.length === 0) {
+      rawRows = await fetchAndEnrichSheetData();
+    }
+
+    const { applyOverridesToRows } = require('./overrides');
+    const { buildHousekeepingReport, formatHousekeepingDayMessage, appendHousekeepingTimestamp } = require('./housekeepingReport');
+
+    const headers = snapshot?.headers || (rawRows.length > 0 ? (rawRows[0].headers || rawRows[0]) : []);
+    const enrichedRows = await applyOverridesToRows(rawRows, headers);
+
+    const report = buildHousekeepingReport(enrichedRows, {
+      startDateStr: startDate,
+      endDateStr: endDate,
+      filterType: filterType || 'both',
+      sortBy: sortBy || 'natural',
+      headers
+    });
+
+    const now = new Date();
+    const formattedMessages = report.days.map(day => {
+      const whatsappText = appendHousekeepingTimestamp(formatHousekeepingDayMessage(day, { format: 'whatsapp' }), now, 'whatsapp');
+      const telegramText = appendHousekeepingTimestamp(formatHousekeepingDayMessage(day, { format: 'telegramHtml' }), now, 'telegramHtml');
+      return {
+        dateStr: day.dateStr,
+        dayMonth: day.dayMonth,
+        whatsappText,
+        telegramText
+      };
+    });
+
+    res.json({
+      success: true,
+      report,
+      formattedMessages
+    });
+  } catch (err) {
+    console.error('   ❌ Error previewing housekeeping report:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * Send custom date housekeeping room list report to Telegram channel.
+ */
+async function sendHousekeepingReport(req, res) {
+  try {
+    const { startDate, endDate, filterType, sortBy } = req.body;
+    const targetChatId = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID || process.env.TELEGRAM_REPORT_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+
+    if (!targetChatId) {
+      return res.status(400).json({ error: 'TELEGRAM_HOUSEKEEPING_CHAT_ID or TELEGRAM_REPORT_CHAT_ID is not configured in environment!' });
+    }
+
+    const snapshot = await loadSnapshot();
+    let rawRows = snapshot?.allRows || [];
+    if (rawRows.length === 0) {
+      rawRows = await fetchAndEnrichSheetData();
+    }
+
+    const { applyOverridesToRows } = require('./overrides');
+    const { buildHousekeepingReport, formatHousekeepingDayMessage, appendHousekeepingTimestamp } = require('./housekeepingReport');
+
+    const headers = snapshot?.headers || (rawRows.length > 0 ? (rawRows[0].headers || rawRows[0]) : []);
+    const enrichedRows = await applyOverridesToRows(rawRows, headers);
+
+    const report = buildHousekeepingReport(enrichedRows, {
+      startDateStr: startDate,
+      endDateStr: endDate,
+      filterType: filterType || 'both',
+      sortBy: sortBy || 'natural',
+      headers
+    });
+
+    const now = new Date();
+    let sentCount = 0;
+
+    for (const day of report.days) {
+      const baseMsg = formatHousekeepingDayMessage(day, { format: 'telegramHtml' });
+      const msgText = appendHousekeepingTimestamp(baseMsg, now, 'telegramHtml');
+      const msgId = await sendMessage(msgText, null, targetChatId);
+      if (msgId) sentCount++;
+    }
+
+    await appendAuditLog({
+      action: 'HOUSEKEEPING_REPORT_SENT_TELEGRAM',
+      username: req.user.username,
+      role: req.user.role,
+      details: `Sent housekeeping report for ${startDate} to ${endDate} (${sentCount} date message(s) sent)`,
+      ip: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: `Housekeeping report sent to Telegram (${sentCount} date message(s) delivered).`,
+      sentCount,
+      channelId: targetChatId
+    });
+  } catch (err) {
+    console.error('   ❌ Error sending housekeeping report to Telegram:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 let runCheckCallbackRef = null;
 
 function setRunCheckCallback(fn) {
@@ -976,6 +1088,8 @@ module.exports = {
   revertBookingOverride,
   previewBoatTransferReport,
   sendBoatTransferReport,
+  previewHousekeepingReport,
+  sendHousekeepingReport,
   setRunCheckCallback,
   runAdminCommand
 };

@@ -538,6 +538,10 @@ app.delete('/api/admin/bookings/override', requireAuth, requireAdmin, admin.reve
 app.post('/api/admin/reports/boat-transfer/preview', requireAuth, requireAdmin, admin.previewBoatTransferReport);
 app.post('/api/admin/reports/boat-transfer/send', requireAuth, requireAdmin, admin.sendBoatTransferReport);
 
+// Admin Housekeeping Room List Report APIs
+app.post('/api/admin/reports/housekeeping/preview', requireAuth, requireAdmin, admin.previewHousekeepingReport);
+app.post('/api/admin/reports/housekeeping/send', requireAuth, requireAdmin, admin.sendHousekeepingReport);
+
 // Admin Telegram & Bot Commands Action Center API
 app.post('/api/admin/commands/run', requireAuth, requireAdmin, admin.runAdminCommand);
 

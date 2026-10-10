@@ -285,6 +285,7 @@
       <button class="tab-btn"        id="adm-tab-telem" onclick="setAdminTab('telem')">📊 Diagnostics</button>
       <button class="tab-btn"        id="adm-tab-audit" onclick="setAdminTab('audit')">📜 Audit Trail</button>
       <button class="tab-btn"        id="adm-tab-boat"  onclick="setAdminTab('boat')">🚢 Boat Transfer Report</button>
+      <button class="tab-btn"        id="adm-tab-housekeeping" onclick="setAdminTab('housekeeping')">🧹 Housekeeping Report</button>
     </div>
 
 
@@ -727,6 +728,69 @@
         <div id="boat-report-preview-container">
           <div style="text-align: center; padding: 30px; color: var(--text-muted); font-size: 0.85rem; border: 1px dashed var(--border); border-radius: var(--radius-sm);">
             Select dates above and click <strong>🔍 Preview</strong> to generate the boat transfer report.
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 8: HOUSEKEEPING REPORT -->
+      <div id="adm-panel-housekeeping" style="display: none;">
+        <h4 style="font-size: 1rem; font-weight: 600; margin-bottom: 8px;">🧹 Housekeeping Room List Generator</h4>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px;">
+          Generate daily room turnover manifests (Check-Out rooms first with back-to-back turnarounds, followed by Check-In rooms). Preview or dispatch directly to Housekeeping Telegram channel or copy for WhatsApp.
+        </p>
+
+        <!-- Controls Card -->
+        <div style="background: var(--bg-primary); border: 1px solid var(--border); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 24px;">
+          
+          <!-- Date Presets -->
+          <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+            <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Presets:</span>
+            <button type="button" class="action-btn" onclick="applyHousekeepingReportPreset('today')" style="padding: 4px 10px; font-size: 0.78rem;">Today</button>
+            <button type="button" class="action-btn" onclick="applyHousekeepingReportPreset('tomorrow')" style="padding: 4px 10px; font-size: 0.78rem;">Tomorrow</button>
+            <button type="button" class="action-btn" onclick="applyHousekeepingReportPreset('next3')" style="padding: 4px 10px; font-size: 0.78rem;">Next 3 Days</button>
+            <button type="button" class="action-btn" onclick="applyHousekeepingReportPreset('next7')" style="padding: 4px 10px; font-size: 0.78rem;">Next 7 Days</button>
+          </div>
+
+          <!-- Date Form Inputs & Action Buttons -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: flex-end;">
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Start Date</label>
+              <input type="date" id="hk-start-date" class="search-input-field" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">End Date</label>
+              <input type="date" id="hk-end-date" class="search-input-field" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Filter Options</label>
+              <select id="hk-filter-type" class="search-input-field" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                <option value="both">Both Check-Outs & Check-Ins</option>
+                <option value="checkout">Check-Outs Only</option>
+                <option value="checkin">Check-Ins Only</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Room Sorting</label>
+              <select id="hk-sort-by" class="search-input-field" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary);">
+                <option value="natural">Natural Order (B, D, H, S, V)</option>
+                <option value="b2bFirst">b2b Turnarounds First</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" class="action-btn primary-action-btn" onclick="fetchHousekeepingReportPreview()" style="flex: 1; justify-content: center; padding: 9px 12px;">
+                🔍 Preview
+              </button>
+              <button type="button" id="send-hk-tg-btn" class="action-btn" onclick="sendHousekeepingReportToTelegram()" style="flex: 1; justify-content: center; padding: 9px 12px; background: rgba(46, 160, 67, 0.15); color: var(--green); border-color: rgba(46, 160, 67, 0.4);">
+                📡 Send to TG
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview Results Container -->
+        <div id="hk-report-preview-container">
+          <div style="text-align: center; padding: 30px; color: var(--text-muted); font-size: 0.85rem; border: 1px dashed var(--border); border-radius: var(--radius-sm);">
+            Select dates above and click <strong>🔍 Preview</strong> to generate the housekeeping room list.
           </div>
         </div>
       </div>

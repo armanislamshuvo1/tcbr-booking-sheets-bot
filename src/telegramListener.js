@@ -79,6 +79,7 @@ async function handleTelegramUpdate(update) {
           `• <b>/status</b> - Get database, uptime, and check status.\n` +
           `• <b>/summary</b> - List current month bookings.\n` +
           `• <b>/report</b> - Generate 10-day customer report (check-ins & check-outs).\n` +
+          `• <b>/housekeeping</b> (or <b>/hk</b>) - Generate housekeeping room list (today / tomorrow).\n` +
           `• <b>/transfercheck</b> - Check for booking changes and update report.\n` +
           `• <b>/check</b> - Trigger a manual sheet check right now.\n` +
           `• <b>/remind</b> - Trigger manual check and send 30-day reminders.\n` +
@@ -215,6 +216,59 @@ async function handleTelegramUpdate(update) {
         }
       }
 
+      else if (command === '/housekeeping' || command === '/hk') {
+        const parts = text.split(' ');
+        const dateArg = parts[1] ? parts[1].trim().toLowerCase() : 'today';
+
+        let targetDateStr;
+        const now = new Date();
+        const { toKLDateString, buildHousekeepingReport, formatHousekeepingDayMessage, appendHousekeepingTimestamp } = require('./housekeepingReport');
+
+        if (dateArg === 'tomorrow' || dateArg === 'esok') {
+          const tom = new Date(now);
+          tom.setDate(now.getDate() + 1);
+          targetDateStr = toKLDateString(tom);
+        } else if (dateArg === 'today' || dateArg === 'hariini') {
+          targetDateStr = toKLDateString(now);
+        } else {
+          const { parseDate } = require('./detector');
+          const parsed = parseDate(dateArg);
+          if (parsed) {
+            targetDateStr = toKLDateString(parsed);
+          } else {
+            targetDateStr = toKLDateString(now);
+          }
+        }
+
+        await sendDirectMessage(chatId, `⏱ <b>Generating housekeeping room list for ${targetDateStr}...</b>`);
+        try {
+          const rows = await fetchAndEnrichSheetData();
+          const { applyOverridesToRows } = require('./overrides');
+          const previousSnapshot = await loadSnapshot();
+          const headers = previousSnapshot?.headers || (rows.length > 0 ? (rows[0].headers || rows[0]) : []);
+          const enrichedRows = await applyOverridesToRows(rows, headers);
+
+          const report = buildHousekeepingReport(enrichedRows, {
+            startDateStr: targetDateStr,
+            endDateStr: targetDateStr,
+            filterType: 'both',
+            headers
+          });
+
+          if (!report || report.days.length === 0) {
+            await sendDirectMessage(chatId, `ℹ️ No housekeeping data found for ${targetDateStr}.`);
+          } else {
+            for (const day of report.days) {
+              const baseMsg = formatHousekeepingDayMessage(day, { format: 'telegramHtml' });
+              const msg = appendHousekeepingTimestamp(baseMsg, new Date(), 'telegramHtml');
+              await sendDirectMessage(chatId, msg);
+            }
+          }
+        } catch (err) {
+          await sendDirectMessage(chatId, `❌ <b>Error generating housekeeping list:</b> ${err.message}`);
+        }
+      }
+
       else if (command === '/transfercheck' || command === '/transfer-check') {
         const targetChat = REPORT_CHAT_ID || chatId;
         await sendDirectMessage(chatId, '⏱ <b>Running transfer check...</b>');
@@ -280,7 +334,8 @@ async function handleTelegramUpdate(update) {
               currentMonthRows,
               previousSnapshot?.sentReminders || {},
               previousSnapshot?.lastWeeklyReportTime || null,
-              messages
+              messages,
+              previousSnapshot?.lastHousekeepingMessages || null
             );
 
             await sendDirectMessage(chatId, `✅ <b>Transfer report updated!</b> 10-day report has been checked and updated for changed dates.`);

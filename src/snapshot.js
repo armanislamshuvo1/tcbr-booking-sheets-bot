@@ -119,7 +119,7 @@ async function loadSnapshot() {
  * @param {Array[]} allRows        - Full sheet data
  * @param {Array}   currentMonthRows - Rows matching this month
  */
-async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastWeeklyReportTime = null, lastReportMessages = null) {
+async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastWeeklyReportTime = null, lastReportMessages = null, lastHousekeepingMessages = null) {
   const headerIndex = findHeaderRowIndex(allRows);
   const headers = allRows[headerIndex] || [];
 
@@ -146,6 +146,7 @@ async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastW
     sentReminders,
     lastWeeklyReportTime,
     lastReportMessages, // { headerId, dateMessages: { "YYYY-MM-DD": messageId } }
+    lastHousekeepingMessages, // { dateMessages: { "YYYY-MM-DD": messageId }, dateHashes: { "YYYY-MM-DD": hash } }
   };
 
   for (const entry of currentMonthRows) {
