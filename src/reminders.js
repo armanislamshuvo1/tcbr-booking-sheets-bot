@@ -182,6 +182,8 @@ async function checkAndSend30DayReminders(rows, previousSnapshot) {
     }
   } catch (err) {
     console.error(`   ❌  Unexpected error while sending reminders: ${err.message}`);
+    const { appendErrorLog } = require('./snapshot');
+    await appendErrorLog(err, { source: '30-Day Payment Reminders' });
     sendOk = false;
   }
 

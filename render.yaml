@@ -17,6 +17,8 @@ services:
         sync: false
       - key: TELEGRAM_REPORT_CHAT_ID
         sync: false
+      - key: TELEGRAM_HOUSEKEEPING_CHAT_ID
+        sync: false
       - key: TELEGRAM_REMINDER_CHANNEL_ID
         sync: false
       - key: MONGODB_URI

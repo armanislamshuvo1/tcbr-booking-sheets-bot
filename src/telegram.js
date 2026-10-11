@@ -1,6 +1,6 @@
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
-const { loadBotConfig } = require('./snapshot');
+const { loadBotConfig, appendErrorLog } = require('./snapshot');
 
 const FETCH_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 2;
@@ -94,12 +94,20 @@ async function sendMessage(text, replyMarkup = null, targetChatId = CHAT_ID, dis
 
   if (!response) {
     console.error('   ❌  Failed to send Telegram message after all retries.');
+    await appendErrorLog(`Failed to send Telegram message after ${MAX_RETRIES + 1} attempts (network/timeout).`, {
+      source: 'Telegram API (sendMessage)',
+      details: `Target Chat ID: ${targetChatId}`
+    });
     return null;
   }
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`   ❌  Telegram API error: ${response.statusText} (${errorText})`);
+    await appendErrorLog(`Telegram API error (${response.status} ${response.statusText}): ${errorText}`, {
+      source: 'Telegram API (sendMessage)',
+      details: `Target Chat ID: ${targetChatId}`
+    });
     return null;
   }
 

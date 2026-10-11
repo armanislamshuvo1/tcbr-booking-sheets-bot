@@ -327,6 +327,7 @@ function updateStats(status) {
   const statNewEl = document.getElementById('stat-new');
   const statModEl = document.getElementById('stat-modified');
   const statErrEl = document.getElementById('stat-errors');
+  const statErrSubEl = document.getElementById('stat-errors-sub');
 
   if (isViewer) {
     if (statTotalEl) statTotalEl.textContent = currentBookings.length;
@@ -334,8 +335,13 @@ function updateStats(status) {
   }
 
   let newCount = 0, modCount = 0, errCount = 0;
+  let latestError = null;
   for (const event of allHistory) {
-    if (event.error) { errCount++; continue; }
+    if (event.error) {
+      errCount++;
+      if (!latestError) latestError = event;
+      continue;
+    }
     newCount += (event.newRows || []).length;
     modCount += (event.modifiedRows || []).length;
   }
@@ -345,6 +351,31 @@ function updateStats(status) {
   if (statNewEl) statNewEl.textContent = newCount;
   if (statModEl) statModEl.textContent = modCount;
   if (statErrEl) statErrEl.textContent = errCount;
+  if (statErrSubEl) {
+    if (errCount > 0 && latestError) {
+      const src = latestError.errorSource || 'Bot Error';
+      const msgPreview = String(latestError.error).length > 38
+        ? String(latestError.error).slice(0, 38) + '…'
+        : String(latestError.error);
+      statErrSubEl.textContent = `${src}: ${msgPreview}`;
+      statErrSubEl.style.color = 'var(--red)';
+    } else {
+      statErrSubEl.textContent = 'No errors recorded (Click to view)';
+      statErrSubEl.style.color = '';
+    }
+  }
+}
+
+// ── Jump directly to Errors view when clicking the Errors stat card ─────────
+function showErrorsView() {
+  if (currentUser && isViewerRole(currentUser.role)) return;
+  clearDateFilters();
+  setTab('changelog');
+  setFilter('error');
+  const sectionEl = document.getElementById('category-filters') || document.getElementById('changes-list');
+  if (sectionEl) {
+    sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 // ── Tab switcher ────────────────────────────────────────────────────────────
@@ -368,7 +399,9 @@ function setTab(tabName) {
   if (tabName === 'changelog') {
     if (filterBar) filterBar.style.display = 'flex';
     if (monthFilterContainer) monthFilterContainer.style.display = 'none';
-    if (viewTitleEl) viewTitleEl.innerHTML = '📋 Change Log';
+    if (viewTitleEl) {
+      viewTitleEl.innerHTML = activeFilter === 'error' ? '🚨 System & Bot Errors' : '📋 Change Log';
+    }
   } else if (tabName === 'inhouse') {
     if (filterBar) filterBar.style.display = 'none';
     if (monthFilterContainer) monthFilterContainer.style.display = 'none';
@@ -395,13 +428,18 @@ function setTab(tabName) {
 function setFilter(filter) {
   activeFilter = filter;
   document.querySelectorAll('.filter-btn').forEach(b => {
-    b.classList.remove('active','active-green','active-yellow');
+    b.classList.remove('active','active-green','active-yellow','active-red');
   });
   const btn = document.getElementById('filter-' + filter);
   if (btn) {
-    if (filter === 'new')      btn.classList.add('active-green');
+    if (filter === 'new')           btn.classList.add('active-green');
     else if (filter === 'modified') btn.classList.add('active-yellow');
+    else if (filter === 'error')    btn.classList.add('active-red');
     else btn.classList.add('active');
+  }
+  const viewTitleEl = document.getElementById('view-title');
+  if (activeTab === 'changelog' && viewTitleEl) {
+    viewTitleEl.innerHTML = filter === 'error' ? '🚨 System & Bot Errors' : '📋 Change Log';
   }
   renderContent();
 }
@@ -975,7 +1013,11 @@ function renderContent() {
     if (searchQuery || parsedCheckInDate || parsedCheckOutDate) {
       filtered = filtered.filter(item => {
         if (item.type === 'error') {
-          return searchQuery ? item.event.error.toLowerCase().includes(searchQuery) : true;
+          if (!searchQuery) return true;
+          const errText = (item.event.error || '').toLowerCase();
+          const errSrc = (item.event.errorSource || '').toLowerCase();
+          const errDet = (item.event.errorDetails || '').toLowerCase();
+          return errText.includes(searchQuery) || errSrc.includes(searchQuery) || errDet.includes(searchQuery);
         }
 
         const rowData = item.row.row || [];
@@ -1013,7 +1055,14 @@ function renderContent() {
     if (badgeCountEl) badgeCountEl.textContent = `${filtered.length} event${filtered.length !== 1 ? 's' : ''}`;
 
     if (filtered.length === 0) {
-      if (!searchQuery && !parsedCheckInDate && !parsedCheckOutDate && items.length === 0) {
+      if (activeFilter === 'error') {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">✅</div>
+            <h3>No errors recorded</h3>
+            <p>All Google Sheets checks, Telegram notifications, and background jobs are running without errors.</p>
+          </div>`;
+      } else if (!searchQuery && !parsedCheckInDate && !parsedCheckOutDate && items.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
             <div class="icon">📋</div>
@@ -1277,12 +1326,21 @@ function buildCard(item, idx) {
   const id = `card-${idx}`;
 
   if (item.type === 'error') {
+    const errorSource = item.event.errorSource || 'Bot / System Error';
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    const detailsHtml = (isAdmin && item.event.errorDetails)
+      ? `<details style="margin-top: 10px;">
+           <summary style="cursor: pointer; font-size: 0.78rem; color: var(--text-secondary); user-select: none;">🔍 Technical / Stack Details (Admin Only)</summary>
+           <pre style="margin-top: 8px; padding: 10px 12px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; overflow-x: auto;">${escapeHtml(item.event.errorDetails)}</pre>
+         </details>`
+      : '';
+
     return `
-      <div class="change-card modified" id="${id}">
+      <div class="change-card error-card open" id="${id}">
         <div class="card-header" onclick="toggleCard('${id}')">
-          <div class="card-left">
-            <span class="type-badge modified">ERROR</span>
-            <span class="card-title">Bot Error</span>
+          <div class="card-left" style="flex-wrap: wrap;">
+            <span class="type-badge error">🚨 ERROR</span>
+            <span class="card-title" style="font-weight: 600;">${escapeHtml(errorSource)}</span>
           </div>
           <div style="display:flex;align-items:center;gap:12px">
             <span class="card-time">${formatTime(item.event.checkedAt)}</span>
@@ -1290,7 +1348,10 @@ function buildCard(item, idx) {
           </div>
         </div>
         <div class="card-body">
-          <p style="color:var(--red);font-weight:500">${escapeHtml(item.event.error)}</p>
+          <div style="margin-top: 12px; padding: 12px 14px; background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.35); border-radius: var(--radius-sm); color: var(--red); font-weight: 500; font-size: 0.85rem; word-break: break-word;">
+            ❌ ${escapeHtml(item.event.error)}
+          </div>
+          ${detailsHtml}
         </div>
       </div>`;
   }

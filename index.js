@@ -6,7 +6,7 @@ const { startTelegramListener } = require('./src/telegramListener');
 const { fetchAndEnrichSheetData, fetchSheetData } = require('./src/sheets');
 const { detectChanges } = require('./src/detector');
 const { sendTelegramAlert, isTelegramDisabled } = require('./src/telegram');
-const { loadSnapshot, saveSnapshot, appendHistory, clearMonthData } = require('./src/snapshot');
+const { loadSnapshot, saveSnapshot, appendHistory, appendErrorLog, clearMonthData } = require('./src/snapshot');
 const { checkAndSend30DayReminders } = require('./src/reminders');
 const { sendWeeklyReport, affectsReportWindow, getChangedDates, buildReport, formatDayMessage } = require('./src/weeklyReport');
 const { buildHousekeepingReport, formatHousekeepingDayMessage, sendHousekeepingAutoReport, toKLDateString } = require('./src/housekeepingReport');
@@ -31,7 +31,7 @@ let lastReportMessages = null; // { headerId, dateMessages: { "YYYY-MM-DD": msgI
 let pendingReportUpdate = false; // true when a report update was deferred due to quiet hours
 
 // Housekeeping report state
-const HK_CHAT_ID = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID || REPORT_CHAT_ID;
+const HK_CHAT_ID = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID;
 let lastHousekeepingReportTime = 0;
 let lastHousekeepingMessages = null; // { dateMessages: { "YYYY-MM-DD": msgId }, dateHashes: { "YYYY-MM-DD": hash } }
 let pendingHousekeepingUpdate = false;
@@ -47,7 +47,7 @@ console.log(`   TELEGRAM NOTIFICATIONS:        ${isTelegramDisabled() ? '⚠️ 
 console.log(`   TELEGRAM_CHAT_ID:             ${CHAT_ID ? `${CHAT_ID.slice(0, 6)}...${CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
 console.log(`   TELEGRAM_ADMIN_CHAT_ID:       ${ADMIN_CHAT_ID ? `${ADMIN_CHAT_ID.slice(0, 6)}...${ADMIN_CHAT_ID.slice(-4)}` : 'ℹ️ NOT SET (Falling back to TELEGRAM_CHAT_ID)'}`);
 console.log(`   TELEGRAM_REPORT_CHAT_ID:      ${REPORT_CHAT_ID ? `${REPORT_CHAT_ID.slice(0, 6)}...${REPORT_CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
-console.log(`   TELEGRAM_HOUSEKEEPING_CHAT_ID:${HK_CHAT_ID ? `${HK_CHAT_ID.slice(0, 6)}...${HK_CHAT_ID.slice(-4)}` : '❌ NOT SET'}`);
+console.log(`   TELEGRAM_HOUSEKEEPING_CHAT_ID:${HK_CHAT_ID ? `${HK_CHAT_ID.slice(0, 6)}...${HK_CHAT_ID.slice(-4)}` : 'ℹ️ NOT SET (Auto-report disabled)'}`);
 console.log(`   TELEGRAM_REMINDER_CHANNEL_ID: ${REMINDER_CHANNEL_ID ? `${REMINDER_CHANNEL_ID.slice(0, 6)}...${REMINDER_CHANNEL_ID.slice(-4)}` : '❌ NOT SET'}`);
 
 if (!REPORT_CHAT_ID) {
@@ -221,6 +221,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
             console.log('   ✅ Weekly/daily report updated successfully.');
           } catch (reportErr) {
             console.error('   ❌ Failed to update weekly/daily report:', reportErr.message);
+            await appendErrorLog(reportErr, { source: 'Boat Transfer Report Auto-Update' });
           }
         }
       }
@@ -245,7 +246,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
       let hkContentChanged = false;
       const lastHkHashes = lastHousekeepingMessages?.dateHashes || {};
       for (const day of hkReport.days) {
-        const dayText = formatHousekeepingDayMessage(day, { format: 'whatsapp' });
+        const dayText = formatHousekeepingDayMessage(day, { format: 'telegramHtml' });
         const hash = crypto.createHash('md5').update(dayText).digest('hex');
         if (lastHkHashes[day.dateStr] !== hash) {
           hkContentChanged = true;
@@ -280,6 +281,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
             console.log('   ✅ Housekeeping report auto-updated successfully on Telegram.');
           } catch (hkErr) {
             console.error('   ❌ Failed to auto-update housekeeping report:', hkErr.message);
+            await appendErrorLog(hkErr, { source: 'Housekeeping Report Auto-Update' });
           }
         }
       }
@@ -305,6 +307,18 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
     const isSameError = (errorMsg === lastErrorMessage);
     const hasSnoozePassed = (nowMs - lastErrorAlertTime > snoozeMs);
 
+    const retryStatus = currentRetry < 3
+      ? `Attempt ${currentRetry + 1}/4 failed — retrying in 1m`
+      : `Failed after all 4 attempts`;
+
+    await appendErrorLog(err, {
+      id: eventId,
+      checkedAt: now.toISOString(),
+      source: `Google Sheets Check (${retryStatus})`,
+      details: err.stack || null,
+      incrementCheck: true
+    });
+
     if (currentRetry < 3) {
       const nextRetry = currentRetry + 1;
       console.log(`   ⚠️ Check failed (attempt ${currentRetry + 1}/4). Scheduling retry ${nextRetry}/3 in 1 minute...`);
@@ -319,6 +333,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
           console.log('   ✅ Telegram error alert sent (after 3 retries failed).');
         } catch (tgErr) {
           console.error('   ❌ Failed to send Telegram error alert:', tgErr.message);
+          await appendErrorLog(tgErr, { source: 'Telegram Error Alert' });
         }
       } else {
         console.log(`   ℹ️ Telegram error alert snoozed (Same error within ${snoozeHours}h).`);
@@ -395,6 +410,7 @@ if (REPORT_CHAT_ID) {
       console.log('   ✅ Saturday report sent successfully.');
     } catch (err) {
       console.error('   ❌ Saturday report failed:', err.message);
+      await appendErrorLog(err, { source: 'Saturday Weekly Report' });
     }
   }, {
     timezone: 'Asia/Kuala_Lumpur'
@@ -402,6 +418,17 @@ if (REPORT_CHAT_ID) {
 } else {
   console.log('⚠️  TELEGRAM_REPORT_CHAT_ID not set. Weekly report job disabled.');
 }
+
+// ─── Global Unhandled Error Logging ─────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+  console.error('   ❌ Unhandled Rejection:', reason);
+  appendErrorLog(reason, { source: 'Unhandled Promise Rejection' });
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('   ❌ Uncaught Exception:', err);
+  appendErrorLog(err, { source: 'Uncaught Exception' });
+});
 
 console.log('🌐 Dashboard: http://localhost:' + (process.env.DASHBOARD_PORT || 3000));
 console.log('👋 Bot is running. Press Ctrl+C to stop.\n');

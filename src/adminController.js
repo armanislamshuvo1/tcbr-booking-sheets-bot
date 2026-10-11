@@ -12,6 +12,7 @@ const {
   loadSnapshot,
   loadHistory,
   saveSnapshot,
+  appendErrorLog,
   addNote,
   getNotes
 } = require('./snapshot');
@@ -704,6 +705,7 @@ async function previewBoatTransferReport(req, res) {
     });
   } catch (err) {
     console.error('   ❌ Error previewing boat transfer report:', err.message);
+    await appendErrorLog(err, { source: 'Admin — Boat Transfer Report Preview' });
     res.status(500).json({ error: err.message });
   }
 }
@@ -775,6 +777,7 @@ async function sendBoatTransferReport(req, res) {
     });
   } catch (err) {
     console.error('   ❌ Error sending boat transfer report to Telegram:', err.message);
+    await appendErrorLog(err, { source: 'Admin — Boat Transfer Report Send' });
     res.status(500).json({ error: err.message });
   }
 }
@@ -825,6 +828,7 @@ async function previewHousekeepingReport(req, res) {
     });
   } catch (err) {
     console.error('   ❌ Error previewing housekeeping report:', err.message);
+    await appendErrorLog(err, { source: 'Admin — Housekeeping Report Preview' });
     res.status(500).json({ error: err.message });
   }
 }
@@ -835,10 +839,10 @@ async function previewHousekeepingReport(req, res) {
 async function sendHousekeepingReport(req, res) {
   try {
     const { startDate, endDate, filterType, sortBy } = req.body;
-    const targetChatId = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID || process.env.TELEGRAM_REPORT_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+    const targetChatId = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID;
 
     if (!targetChatId) {
-      return res.status(400).json({ error: 'TELEGRAM_HOUSEKEEPING_CHAT_ID or TELEGRAM_REPORT_CHAT_ID is not configured in environment!' });
+      return res.status(400).json({ error: 'TELEGRAM_HOUSEKEEPING_CHAT_ID is not configured in environment!' });
     }
 
     const snapshot = await loadSnapshot();
@@ -887,6 +891,7 @@ async function sendHousekeepingReport(req, res) {
     });
   } catch (err) {
     console.error('   ❌ Error sending housekeeping report to Telegram:', err.message);
+    await appendErrorLog(err, { source: 'Admin — Housekeeping Report Send' });
     res.status(500).json({ error: err.message });
   }
 }
@@ -1062,6 +1067,7 @@ async function runAdminCommand(req, res) {
     });
   } catch (err) {
     console.error('   ❌ Error executing admin command:', err.message);
+    await appendErrorLog(err, { source: 'Admin — Command Execution' });
     res.status(500).json({ error: err.message });
   }
 }

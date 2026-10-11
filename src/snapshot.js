@@ -219,6 +219,62 @@ async function appendHistory(event) {
 }
 
 /**
+ * Append a bot/system error to the history log so admins can view it on the dashboard.
+ * @param {Error|string} error
+ * @param {object} context - { source, details, id, checkedAt, incrementCheck }
+ */
+async function appendErrorLog(error, context = {}) {
+  try {
+    const crypto = require('crypto');
+    const errorMsg = (error instanceof Error) ? error.message : String(error || 'Unknown error');
+    const event = {
+      id: context.id || crypto.randomUUID(),
+      checkedAt: context.checkedAt || new Date().toISOString(),
+      error: errorMsg,
+      errorSource: context.source || 'System',
+      errorDetails: context.details || (error instanceof Error && error.stack ? error.stack : null),
+    };
+
+    cachedHistory = null;
+    lastHistoryLoadTime = 0;
+
+    if (context.incrementCheck) {
+      await incrementTotalChecks();
+    }
+
+    const db = await getDb();
+    if (db) {
+      try {
+        const collection = db.collection('history');
+        await collection.insertOne({ ...event, createdAt: new Date() });
+        return event;
+      } catch (err) {
+        console.error('   ❌ MongoDB appendErrorLog error:', err.message);
+      }
+    }
+
+    let history = [];
+    if (fs.existsSync(HISTORY_FILE)) {
+      try { history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8')); } catch {}
+    }
+
+    history.unshift(event);
+
+    const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    history = history.filter(h => {
+      const dateToCheck = h.checkedAt ? new Date(h.checkedAt) : new Date(h.createdAt);
+      return dateToCheck >= cutoff;
+    });
+
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf-8');
+    return event;
+  } catch (logErr) {
+    console.error('   ❌ Failed to write error log to history:', logErr.message);
+    return null;
+  }
+}
+
+/**
  * Append a verification to an existing report event in history.
  * If the event exists, pushes to its verifications array.
  * If not, creates a new event entry.
@@ -679,6 +735,7 @@ module.exports = {
   loadSnapshot,
   saveSnapshot,
   appendHistory,
+  appendErrorLog,
   appendVerification,
   getVerifications,
   loadHistory,
