@@ -9,7 +9,7 @@ const { sendTelegramAlert, isTelegramDisabled } = require('./src/telegram');
 const { loadSnapshot, saveSnapshot, appendHistory, appendErrorLog, clearMonthData } = require('./src/snapshot');
 const { checkAndSend30DayReminders } = require('./src/reminders');
 const { sendWeeklyReport, affectsReportWindow, getChangedDates, buildReport, formatDayMessage } = require('./src/weeklyReport');
-const { buildHousekeepingReport, formatHousekeepingDayMessage, sendHousekeepingAutoReport, toKLDateString } = require('./src/housekeepingReport');
+const { buildHousekeepingReport, formatHousekeepingDayMessage, sendHousekeepingAutoReport, getHousekeeping10DayWindow, toKLDateString } = require('./src/housekeepingReport');
 const { isQuietHours, isReportQuietHours } = require('./src/quietHours');
 const { getOrLoadConfig } = require('./src/adminController');
 
@@ -231,10 +231,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
     if (HK_CHAT_ID && !isInitialRun) {
       const hasChanges = (newRows.length > 0 || modifiedRows.length > 0);
       const hkNow = new Date();
-      const hkStartStr = toKLDateString(hkNow);
-      const hkEndDate = new Date(hkNow);
-      hkEndDate.setDate(hkNow.getDate() + 9);
-      const hkEndStr = toKLDateString(hkEndDate);
+      const { startStr: hkStartStr, endStr: hkEndStr } = getHousekeeping10DayWindow(hkNow);
 
       const hkReport = buildHousekeepingReport(rows, {
         startDateStr: hkStartStr,
@@ -288,7 +285,7 @@ async function runCheck(forceReminders = false, isManual = false, retryCount = 0
     }
 
     // 7. Save new snapshot
-    await saveSnapshot(rows, currentMonthRows, sentReminders, lastWeeklyReportTime, lastReportMessages, lastHousekeepingMessages);
+    await saveSnapshot(rows, currentMonthRows, sentReminders, lastWeeklyReportTime, lastReportMessages, lastHousekeepingMessages, lastHousekeepingReportTime);
 
     // Reset error alerts state on success
     lastErrorAlertTime = 0;
@@ -406,7 +403,15 @@ if (REPORT_CHAT_ID) {
       lastReportMessages = messages;
       // Persist the updated time and message IDs while keeping the current month rows intact
       const currentMonthRows = Object.values(snapshot?.monthMap || {});
-      await saveSnapshot(rows, currentMonthRows, snapshot?.sentReminders || {}, lastWeeklyReportTime, lastReportMessages);
+      await saveSnapshot(
+        rows,
+        currentMonthRows,
+        snapshot?.sentReminders || {},
+        lastWeeklyReportTime,
+        lastReportMessages,
+        snapshot?.lastHousekeepingMessages || lastHousekeepingMessages,
+        snapshot?.lastHousekeepingReportTime || lastHousekeepingReportTime
+      );
       console.log('   ✅ Saturday report sent successfully.');
     } catch (err) {
       console.error('   ❌ Saturday report failed:', err.message);

@@ -12,12 +12,13 @@ const {
   loadSnapshot,
   loadHistory,
   saveSnapshot,
+  updateSnapshotReportState,
   appendErrorLog,
   addNote,
   getNotes
 } = require('./snapshot');
 const { fetchAndEnrichSheetData } = require('./sheets');
-const { sendMessage } = require('./telegram');
+const { sendMessage, editMessageText } = require('./telegram');
 
 // In-memory cache for dynamic bot settings
 let activeConfig = null;
@@ -745,27 +746,65 @@ async function sendBoatTransferReport(req, res) {
     const eventId = crypto.randomUUID();
     let sentCount = 0;
 
+    const prevReportMessages = snapshot?.lastReportMessages || {};
+    const reportDateMessages = { ...(prevReportMessages.dateMessages || {}) };
+    const reportDateHashes = { ...(prevReportMessages.dateHashes || {}) };
+
     for (const day of report.days) {
+      const dateStr = day.dateStr;
       const msgText = formatDayMessage(report, day);
+      const hash = crypto.createHash('md5').update(msgText).digest('hex');
       const timeString = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur' });
       const dateString = now.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Kuala_Lumpur' });
       const dayTextWithTimestamp = `${msgText}\n\n<i>Last updated: ${timeString}, ${dateString}</i>`;
 
       const replyMarkup = {
         inline_keyboard: [
-          [{ text: '✅ Verify', callback_data: `verify_report:${eventId}:${day.dateStr}` }]
+          [{ text: '✅ Verify', callback_data: `verify_report:${eventId}:${dateStr}` }]
         ]
       };
 
-      const msgId = await sendMessage(dayTextWithTimestamp, replyMarkup, targetChatId);
-      if (msgId) sentCount++;
+      const prevMsgId = reportDateMessages[dateStr];
+      if (prevMsgId) {
+        try {
+          const edited = await editMessageText(targetChatId, prevMsgId, dayTextWithTimestamp, replyMarkup);
+          reportDateMessages[dateStr] = prevMsgId;
+          if (edited) {
+            reportDateHashes[dateStr] = hash;
+            sentCount++;
+          }
+        } catch (err) {
+          const newMsgId = await sendMessage(dayTextWithTimestamp, replyMarkup, targetChatId);
+          if (newMsgId) {
+            reportDateMessages[dateStr] = newMsgId;
+            reportDateHashes[dateStr] = hash;
+            sentCount++;
+          }
+        }
+      } else {
+        const msgId = await sendMessage(dayTextWithTimestamp, replyMarkup, targetChatId);
+        if (msgId) {
+          reportDateMessages[dateStr] = msgId;
+          reportDateHashes[dateStr] = hash;
+          sentCount++;
+        }
+      }
     }
+
+    await updateSnapshotReportState({
+      lastReportMessages: {
+        headerId: prevReportMessages.headerId || null,
+        dateMessages: reportDateMessages,
+        dateHashes: reportDateHashes,
+      },
+      lastWeeklyReportTime: Date.now(),
+    });
 
     await appendAuditLog({
       action: 'BOAT_REPORT_SENT_TELEGRAM',
       username: req.user.username,
       role: req.user.role,
-      details: `Sent boat transfer report for ${startDate} to ${endDate} (${sentCount} date message(s) sent)`,
+      details: `Sent boat transfer report for ${startDate} to ${endDate} (${sentCount} date message(s) sent/updated)`,
       ip: req.ip
     });
 
@@ -868,18 +907,56 @@ async function sendHousekeepingReport(req, res) {
     const now = new Date();
     let sentCount = 0;
 
+    const prevHkMessages = snapshot?.lastHousekeepingMessages || {};
+    const dateMessages = { ...(prevHkMessages.dateMessages || {}) };
+    const dateHashes = { ...(prevHkMessages.dateHashes || {}) };
+
     for (const day of report.days) {
+      const dateStr = day.dateStr;
       const baseMsg = formatHousekeepingDayMessage(day, { format: 'telegramHtml' });
+      const hash = crypto.createHash('md5').update(baseMsg).digest('hex');
       const msgText = appendHousekeepingTimestamp(baseMsg, now, 'telegramHtml');
-      const msgId = await sendMessage(msgText, null, targetChatId);
-      if (msgId) sentCount++;
+
+      const prevMsgId = dateMessages[dateStr];
+      if (prevMsgId) {
+        try {
+          const edited = await editMessageText(targetChatId, prevMsgId, msgText);
+          dateMessages[dateStr] = prevMsgId;
+          if (edited) {
+            dateHashes[dateStr] = hash;
+            sentCount++;
+          }
+        } catch (err) {
+          const newMsgId = await sendMessage(msgText, null, targetChatId);
+          if (newMsgId) {
+            dateMessages[dateStr] = newMsgId;
+            dateHashes[dateStr] = hash;
+            sentCount++;
+          }
+        }
+      } else {
+        const msgId = await sendMessage(msgText, null, targetChatId);
+        if (msgId) {
+          dateMessages[dateStr] = msgId;
+          dateHashes[dateStr] = hash;
+          sentCount++;
+        }
+      }
     }
+
+    await updateSnapshotReportState({
+      lastHousekeepingMessages: {
+        dateMessages,
+        dateHashes,
+      },
+      lastHousekeepingReportTime: Date.now(),
+    });
 
     await appendAuditLog({
       action: 'HOUSEKEEPING_REPORT_SENT_TELEGRAM',
       username: req.user.username,
       role: req.user.role,
-      details: `Sent housekeeping report for ${startDate} to ${endDate} (${sentCount} date message(s) sent)`,
+      details: `Sent housekeeping report for ${startDate} to ${endDate} (${sentCount} date message(s) sent/updated)`,
       ip: req.ip
     });
 
@@ -953,8 +1030,10 @@ async function runAdminCommand(req, res) {
         rows,
         currentMonthRows,
         previousSnapshot?.sentReminders || {},
-        previousSnapshot?.lastWeeklyReportTime || null,
-        messages
+        Date.now(),
+        messages,
+        previousSnapshot?.lastHousekeepingMessages || null,
+        previousSnapshot?.lastHousekeepingReportTime || null
       );
 
       const count = messages.dateMessages ? Object.keys(messages.dateMessages).length : 0;
@@ -962,9 +1041,11 @@ async function runAdminCommand(req, res) {
       extraData = { messagesCount: count, channelId: targetChat };
     } else if (commandKey === 'transfercheck' || commandKey === 'transfer-check') {
       const targetChat = process.env.TELEGRAM_REPORT_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+      const hkChatId = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID;
       const rows = await fetchAndEnrichSheetData();
       const previousSnapshot = await loadSnapshot();
-      const { affectsReportWindow } = require('./weeklyReport');
+      const { affectsReportWindow, getChangedDates } = require('./weeklyReport');
+      const { sendHousekeepingAutoReport } = require('./housekeepingReport');
       const { findHeaderRowIndex } = require('./detector');
 
       const headerIndex = findHeaderRowIndex(rows);
@@ -1012,19 +1093,30 @@ async function runAdminCommand(req, res) {
 
         if (affectsReportWindow(newRows, modifiedRows)) {
           const { sendWeeklyReport } = require('./weeklyReport');
+          const changedDates = getChangedDates(newRows, modifiedRows);
           const previousMessages = previousSnapshot?.lastReportMessages || null;
-          const { messages } = await sendWeeklyReport(rows, targetChat, 'manual', previousMessages);
+          const { messages } = await sendWeeklyReport(rows, targetChat, 'manual', previousMessages, changedDates);
+
+          let hkMessages = previousSnapshot?.lastHousekeepingMessages || null;
+          let hkTime = previousSnapshot?.lastHousekeepingReportTime || null;
+          if (hkChatId) {
+            const hkRes = await sendHousekeepingAutoReport(rows, hkChatId, 'manual', hkMessages, changedDates);
+            hkMessages = hkRes.messages;
+            hkTime = Date.now();
+          }
 
           const currentMonthRows = Object.values(previousSnapshot?.monthMap || {});
           await saveSnapshot(
             rows,
             currentMonthRows,
             previousSnapshot?.sentReminders || {},
-            previousSnapshot?.lastWeeklyReportTime || null,
-            messages
+            Date.now(),
+            messages,
+            hkMessages,
+            hkTime
           );
 
-          resultMessage = '✅ Boat Transfer Report updated! 10-day report has been checked and updated for changed dates.';
+          resultMessage = '✅ Boat Transfer & Housekeeping Reports updated! 10-day reports have been checked and updated for changed dates.';
         } else {
           resultMessage = `ℹ️ Changes detected (New: ${newKeys.length}, Modified: ${modifiedKeys.length}), but outside the 10-day report window.`;
         }

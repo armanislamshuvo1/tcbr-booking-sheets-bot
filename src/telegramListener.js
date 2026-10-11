@@ -201,8 +201,10 @@ async function handleTelegramUpdate(update) {
             rows,
             currentMonthRows,
             previousSnapshot?.sentReminders || {},
-            previousSnapshot?.lastWeeklyReportTime || null,
-            messages
+            Date.now(),
+            messages,
+            previousSnapshot?.lastHousekeepingMessages || null,
+            previousSnapshot?.lastHousekeepingReportTime || null
           );
 
           const count = messages.dateMessages ? Object.keys(messages.dateMessages).length : 0;
@@ -271,11 +273,13 @@ async function handleTelegramUpdate(update) {
 
       else if (command === '/transfercheck' || command === '/transfer-check') {
         const targetChat = REPORT_CHAT_ID || chatId;
+        const hkChatId = process.env.TELEGRAM_HOUSEKEEPING_CHAT_ID;
         await sendDirectMessage(chatId, '⏱ <b>Running transfer check...</b>');
         try {
           const rows = await fetchAndEnrichSheetData();
           const previousSnapshot = await loadSnapshot();
           const { detectChanges, findHeaderRowIndex } = require('./detector');
+          const { sendHousekeepingAutoReport } = require('./housekeepingReport');
 
           const headerIndex = findHeaderRowIndex(rows);
           const currentMap = {};
@@ -324,8 +328,17 @@ async function handleTelegramUpdate(update) {
           }));
 
           if (affectsReportWindow(newRows, modifiedRows)) {
+            const changedDates = getChangedDates(newRows, modifiedRows);
             const previousMessages = previousSnapshot?.lastReportMessages || null;
-            const { messages } = await sendWeeklyReport(rows, targetChat, 'manual', previousMessages);
+            const { messages } = await sendWeeklyReport(rows, targetChat, 'manual', previousMessages, changedDates);
+
+            let hkMessages = previousSnapshot?.lastHousekeepingMessages || null;
+            let hkTime = previousSnapshot?.lastHousekeepingReportTime || null;
+            if (hkChatId) {
+              const hkRes = await sendHousekeepingAutoReport(rows, hkChatId, 'manual', hkMessages, changedDates);
+              hkMessages = hkRes.messages;
+              hkTime = Date.now();
+            }
 
             const { saveSnapshot } = require('./snapshot');
             const currentMonthRows = Object.values(previousSnapshot?.monthMap || {});
@@ -333,12 +346,13 @@ async function handleTelegramUpdate(update) {
               rows,
               currentMonthRows,
               previousSnapshot?.sentReminders || {},
-              previousSnapshot?.lastWeeklyReportTime || null,
+              Date.now(),
               messages,
-              previousSnapshot?.lastHousekeepingMessages || null
+              hkMessages,
+              hkTime
             );
 
-            await sendDirectMessage(chatId, `✅ <b>Transfer report updated!</b> 10-day report has been checked and updated for changed dates.`);
+            await sendDirectMessage(chatId, `✅ <b>Transfer & housekeeping reports updated!</b> 10-day reports have been checked and updated for changed dates.`);
           } else {
             await sendDirectMessage(chatId, `ℹ️ <b>Changes detected but outside 10-day window.</b>\nNew: ${newKeys.length} | Modified: ${modifiedKeys.length}`);
           }

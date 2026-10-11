@@ -385,6 +385,16 @@ async function editMessageText(chatId, messageId, text, replyMarkup = null) {
 
   if (!response.ok) {
     const errorText = await response.text();
+    if (errorText.includes('message is not modified')) {
+      console.log(`   ℹ️  Telegram message ${messageId} is already up to date (not modified).`);
+      return true;
+    }
+    if (/message to edit not found|MESSAGE_ID_INVALID|message can't be edited/i.test(errorText)) {
+      console.warn(`   ⚠️  Telegram editMessageText: message ${messageId} not found or cannot be edited (${errorText})`);
+      const err = new Error(`Telegram editMessageText failed: ${errorText}`);
+      err.messageNotFound = true;
+      throw err;
+    }
     console.warn(`   ⚠️  Telegram editMessageText API error: ${response.statusText} (${errorText})`);
     return false;
   }

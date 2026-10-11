@@ -119,7 +119,22 @@ async function loadSnapshot() {
  * @param {Array[]} allRows        - Full sheet data
  * @param {Array}   currentMonthRows - Rows matching this month
  */
-async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastWeeklyReportTime = null, lastReportMessages = null, lastHousekeepingMessages = null) {
+async function saveSnapshot(
+  allRows,
+  currentMonthRows,
+  sentReminders = undefined,
+  lastWeeklyReportTime = undefined,
+  lastReportMessages = undefined,
+  lastHousekeepingMessages = undefined,
+  lastHousekeepingReportTime = undefined
+) {
+  const prev = cachedSnapshot || await loadSnapshot() || {};
+  const resolvedSentReminders = sentReminders !== undefined ? sentReminders : (prev.sentReminders || {});
+  const resolvedLastWeeklyReportTime = lastWeeklyReportTime !== undefined ? lastWeeklyReportTime : (prev.lastWeeklyReportTime || null);
+  const resolvedLastReportMessages = lastReportMessages !== undefined ? lastReportMessages : (prev.lastReportMessages || null);
+  const resolvedLastHousekeepingMessages = lastHousekeepingMessages !== undefined ? lastHousekeepingMessages : (prev.lastHousekeepingMessages || null);
+  const resolvedLastHousekeepingReportTime = lastHousekeepingReportTime !== undefined ? lastHousekeepingReportTime : (prev.lastHousekeepingReportTime || null);
+
   const headerIndex = findHeaderRowIndex(allRows);
   const headers = allRows[headerIndex] || [];
 
@@ -143,17 +158,23 @@ async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastW
     headers, // Keep the headers saved in snapshot for current bookings endpoint
     monthMap: {},
     allRows: allRowsData, // Save all rows data for the "All Bookings" tab
-    sentReminders,
-    lastWeeklyReportTime,
-    lastReportMessages, // { headerId, dateMessages: { "YYYY-MM-DD": messageId } }
-    lastHousekeepingMessages, // { dateMessages: { "YYYY-MM-DD": messageId }, dateHashes: { "YYYY-MM-DD": hash } }
+    sentReminders: resolvedSentReminders,
+    lastWeeklyReportTime: resolvedLastWeeklyReportTime,
+    lastReportMessages: resolvedLastReportMessages, // { headerId, dateMessages: { "YYYY-MM-DD": messageId }, dateHashes: { "YYYY-MM-DD": hash } }
+    lastHousekeepingMessages: resolvedLastHousekeepingMessages, // { dateMessages: { "YYYY-MM-DD": messageId }, dateHashes: { "YYYY-MM-DD": hash } }
+    lastHousekeepingReportTime: resolvedLastHousekeepingReportTime,
   };
 
-  for (const entry of currentMonthRows) {
-    const key = rowKey(entry.row, entry.rowIndex);
+  for (let idx = 0; idx < (currentMonthRows || []).length; idx++) {
+    const entry = currentMonthRows[idx];
+    if (!entry) continue;
+    const r = Array.isArray(entry.row) ? entry.row : (Array.isArray(entry) ? entry : null);
+    if (!r) continue;
+    const rIdx = entry.rowIndex !== undefined ? entry.rowIndex : idx;
+    const key = rowKey(r, rIdx);
     snapshot.monthMap[key] = {
-      row: entry.row,
-      rowIndex: entry.rowIndex,
+      row: r,
+      rowIndex: rIdx,
     };
   }
 
@@ -177,6 +198,44 @@ async function saveSnapshot(allRows, currentMonthRows, sentReminders = {}, lastW
   }
 
   fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2), 'utf-8');
+}
+
+/**
+ * Update report message tracking fields on the existing snapshot without re-building all rows.
+ * @param {object} fields - { lastReportMessages, lastWeeklyReportTime, lastHousekeepingMessages, lastHousekeepingReportTime }
+ */
+async function updateSnapshotReportState(fields = {}) {
+  const current = cachedSnapshot || await loadSnapshot();
+  if (!current) return null;
+
+  const updated = {
+    ...current,
+    ...(fields.lastReportMessages !== undefined ? { lastReportMessages: fields.lastReportMessages } : {}),
+    ...(fields.lastWeeklyReportTime !== undefined ? { lastWeeklyReportTime: fields.lastWeeklyReportTime } : {}),
+    ...(fields.lastHousekeepingMessages !== undefined ? { lastHousekeepingMessages: fields.lastHousekeepingMessages } : {}),
+    ...(fields.lastHousekeepingReportTime !== undefined ? { lastHousekeepingReportTime: fields.lastHousekeepingReportTime } : {}),
+  };
+
+  cachedSnapshot = updated;
+  lastSnapshotLoadTime = Date.now();
+
+  const db = await getDb();
+  if (db) {
+    try {
+      const collection = db.collection('snapshots');
+      await collection.updateOne(
+        { type: 'current_baseline' },
+        { $set: { type: 'current_baseline', data: updated, updatedAt: new Date() } },
+        { upsert: true }
+      );
+      return updated;
+    } catch (err) {
+      console.error('   ❌ MongoDB updateSnapshotReportState error:', err.message);
+    }
+  }
+
+  fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+  return updated;
 }
 
 /**
@@ -734,6 +793,7 @@ module.exports = {
   getDb,
   loadSnapshot,
   saveSnapshot,
+  updateSnapshotReportState,
   appendHistory,
   appendErrorLog,
   appendVerification,

@@ -332,9 +332,100 @@ runTest('formatHousekeepingDayMessage: Supports includeTimestamp option', () => 
   assert.ok(formatted.includes('<i>Last updated: 03:45 PM, 10/10</i>'));
 });
 
-console.log(`\nResults: ${passCount} passed, ${failCount} failed.`);
-if (failCount > 0) {
-  process.exit(1);
-} else {
-  console.log('🎉 All Housekeeping Room List tests passed successfully!');
-}
+// ── TEST 10: 10-DAY WINDOW & AUTO-UPDATE IN-PLACE EDITING ───────────────────
+runTest('getHousekeeping10DayWindow: Computes 10-day KL window accurately across UTC day boundary', () => {
+  const { getHousekeeping10DayWindow } = require('../src/housekeepingReport');
+  // 2026-09-30T20:00:00Z is 2026-10-01 04:00 AM KL time
+  const boundaryDate = new Date('2026-09-30T20:00:00.000Z');
+  const win = getHousekeeping10DayWindow(boundaryDate);
+  assert.strictEqual(win.startStr, '2026-10-01');
+  assert.strictEqual(win.endStr, '2026-10-10');
+});
+
+(async () => {
+  const telegram = require('../src/telegram');
+  const { sendHousekeepingAutoReport, getHousekeeping10DayWindow } = require('../src/housekeepingReport');
+
+  const origSend = telegram.sendMessage;
+  const origEdit = telegram.editMessageText;
+
+  try {
+    let sentCalls = [];
+    let editCalls = [];
+    let msgCounter = 1000;
+
+    telegram.sendMessage = async (text, markup, chatId) => {
+      const id = ++msgCounter;
+      sentCalls.push({ id, text, chatId });
+      return id;
+    };
+    telegram.editMessageText = async (chatId, messageId, text) => {
+      editCalls.push({ chatId, messageId, text });
+      return true;
+    };
+
+    const { startStr, endStr } = getHousekeeping10DayWindow(new Date());
+    const headers = ['CODE', 'NAME', 'CHECK IN', 'CHECK OUT', 'ROOM', 'ROOM_PAX'];
+    const initialRows = [
+      headers,
+      ['BK1', 'Alice', startStr, endStr, 'D104 (2 Pax)', '2'],
+    ];
+
+    // 1. Initial send: should send 10 new messages
+    const firstRun = await sendHousekeepingAutoReport(initialRows, 'hk_channel', 'scheduled', null, []);
+    await runTest('sendHousekeepingAutoReport: Sends 10 initial messages when no prevMessages exist', () => {
+      assert.strictEqual(sentCalls.length, 10);
+      assert.strictEqual(editCalls.length, 0);
+      assert.strictEqual(Object.keys(firstRun.messages.dateMessages).length, 10);
+    });
+
+    // 2. Non-housekeeping change on startStr (changedDates includes startStr, but room list hash unchanged)
+    sentCalls = [];
+    editCalls = [];
+    const secondRun = await sendHousekeepingAutoReport(initialRows, 'hk_channel', 'updated', firstRun.messages, [startStr]);
+    await runTest('sendHousekeepingAutoReport: Does not send or edit when room content hash is unchanged even if date is in changedDates', () => {
+      assert.strictEqual(sentCalls.length, 0, 'Must not send new messages');
+      assert.strictEqual(editCalls.length, 0, 'Must not edit unchanged housekeeping messages');
+      assert.deepStrictEqual(secondRun.messages.dateMessages, firstRun.messages.dateMessages);
+    });
+
+    // 3. Room change on startStr: should edit ONLY startStr in-place, never send a new message
+    const updatedRows = [
+      headers,
+      ['BK1', 'Alice', startStr, endStr, 'B109 (4 Pax)', '4'],
+    ];
+    sentCalls = [];
+    editCalls = [];
+    const thirdRun = await sendHousekeepingAutoReport(updatedRows, 'hk_channel', 'updated', secondRun.messages, [startStr, endStr]);
+    await runTest('sendHousekeepingAutoReport: Edits existing messages in-place when room list changes instead of sending new messages', () => {
+      assert.strictEqual(sentCalls.length, 0, 'Must NOT send any new messages when updating existing dates');
+      assert.strictEqual(editCalls.length, 2, 'Should edit only startStr and endStr where room changed');
+      assert.strictEqual(thirdRun.messages.dateMessages[startStr], firstRun.messages.dateMessages[startStr], 'Message ID must be preserved');
+    });
+
+    // 4. Transient edit failure (returns false): must NOT send duplicate new message, and must keep old hash to retry next run
+    telegram.editMessageText = async () => false;
+    const moreRows = [
+      headers,
+      ['BK1', 'Alice', startStr, endStr, 'V102 (2 Pax)', '2'],
+    ];
+    sentCalls = [];
+    editCalls = [];
+    const fourthRun = await sendHousekeepingAutoReport(moreRows, 'hk_channel', 'updated', thirdRun.messages, [startStr]);
+    await runTest('sendHousekeepingAutoReport: Does NOT send duplicate message when editMessageText returns false (transient error)', () => {
+      assert.strictEqual(sentCalls.length, 0, 'Must NOT fall back to sendMessage on transient edit failure');
+      assert.strictEqual(fourthRun.messages.dateMessages[startStr], thirdRun.messages.dateMessages[startStr], 'Must keep prevMsgId');
+      assert.strictEqual(fourthRun.messages.dateHashes[startStr], thirdRun.messages.dateHashes[startStr], 'Must keep prevHash so next run retries');
+    });
+  } finally {
+    telegram.sendMessage = origSend;
+    telegram.editMessageText = origEdit;
+  }
+
+  console.log(`\nResults: ${passCount} passed, ${failCount} failed.`);
+  if (failCount > 0) {
+    process.exit(1);
+  } else {
+    console.log('🎉 All Housekeeping Room List tests passed successfully!');
+  }
+})();

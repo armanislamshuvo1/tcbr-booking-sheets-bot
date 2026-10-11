@@ -603,6 +603,21 @@ function appendHousekeepingTimestamp(text, now = new Date(), format = 'whatsapp'
 }
 
 /**
+ * Get the 10-day forward date range (today to today + 9 days) in KL timezone.
+ * @param {Date} now
+ * @returns {{ startStr: string, endStr: string }}
+ */
+function getHousekeeping10DayWindow(now = new Date()) {
+  const startKL = getKLDate(now);
+  const startJsDate = new Date(startKL.year, startKL.month, startKL.day);
+  const endJsDate = new Date(startKL.year, startKL.month, startKL.day + 9);
+  return {
+    startStr: toKLDateString(startJsDate),
+    endStr: toKLDateString(endJsDate),
+  };
+}
+
+/**
  * Auto-sends and auto-updates the Housekeeping Room List report on Telegram.
  * Mirrors sendWeeklyReport: updates existing date messages in-place via editMessageText,
  * or sends new messages via sendMessage.
@@ -620,10 +635,7 @@ async function sendHousekeepingAutoReport(rows, chatId, reason = 'scheduled', pr
 
   // Build report for the 10-day forward window (today to today + 9 days)
   const now = new Date();
-  const startStr = toKLDateString(now);
-  const endKL = getKLDate(now);
-  const endJsDate = new Date(endKL.year, endKL.month, endKL.day + 9);
-  const endStr = toKLDateString(endJsDate);
+  const { startStr, endStr } = getHousekeeping10DayWindow(now);
 
   const report = buildHousekeepingReport(rows, {
     startDateStr: startStr,
@@ -653,7 +665,8 @@ async function sendHousekeepingAutoReport(rows, chatId, reason = 'scheduled', pr
     const prevMsgId = prevMessages?.dateMessages?.[dateStr];
     const prevHash = prevMessages?.dateHashes?.[dateStr];
 
-    const hasChanged = (prevHash !== hash) || (Array.isArray(changedDates) && changedDates.includes(dateStr));
+    // Only edit when the housekeeping room list content for this date actually changed
+    const hasChanged = prevHash !== hash;
     const needsSending = !prevMsgId || hasChanged;
 
     if (needsSending) {
@@ -664,20 +677,17 @@ async function sendHousekeepingAutoReport(rows, chatId, reason = 'scheduled', pr
         console.log(`   ✏️ [HK Auto] Editing housekeeping message for ${dateStr} (ID: ${prevMsgId})`);
         try {
           const edited = await editMessageText(chatId, prevMsgId, msgText);
+          dateMessages[dateStr] = prevMsgId;
           if (edited) {
-            dateMessages[dateStr] = prevMsgId;
             dateHashes[dateStr] = hash;
           } else {
-            const newMsgId = await sendMessage(msgText, null, chatId);
-            if (newMsgId) {
-              dateMessages[dateStr] = newMsgId;
-              dateHashes[dateStr] = hash;
-            }
+            // Transient error: keep prevMsgId and prevHash so the next check retries editing in-place
+            dateHashes[dateStr] = prevHash;
           }
         } catch (err) {
           if (err.message && err.message.includes('message is not modified')) {
             dateMessages[dateStr] = prevMsgId;
-            dateHashes[dateStr] = prevHash;
+            dateHashes[dateStr] = hash;
           } else {
             console.warn(`   ⚠️ [HK Auto] Failed to edit message for ${dateStr}, sending new:`, err.message);
             const newMsgId = await sendMessage(msgText, null, chatId);
@@ -721,6 +731,7 @@ module.exports = {
   appendHousekeepingTimestamp,
   appendTimestamp: appendHousekeepingTimestamp,
   sendHousekeepingAutoReport,
+  getHousekeeping10DayWindow,
   aggregateRoomList,
   getRowGuestCount,
   toKLDateString,
