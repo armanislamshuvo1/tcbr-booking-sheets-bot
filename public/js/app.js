@@ -197,6 +197,15 @@ let displayLimit = 50; // Client-side pagination limit for rendering speed
 const DASHBOARD_CACHE_KEY = 'sheets_bot_dashboard_cache_v3';
 const CACHE_TTL_MS = 10 * 1000; // 10 seconds cache TTL
 
+function clearDashboardCache() {
+  try {
+    localStorage.removeItem(DASHBOARD_CACHE_KEY);
+    ['admin', 'operator', 'jetty_staff', 'dc', 'anon'].forEach(r => {
+      localStorage.removeItem(`${DASHBOARD_CACHE_KEY}_${r}`);
+    });
+  } catch (e) {}
+}
+
 function applyDashboardData(data) {
   allHistory = data.history || [];
   const status = data.status || {};
@@ -1615,9 +1624,12 @@ function buildBookingCard(booking, idx) {
   const remarkVal = remarkIndex !== -1 ? (rowData[remarkIndex] || '') : (rowData[22] || '');
   const specialReqVal = specialReqIndex !== -1 ? (rowData[specialReqIndex] || '') : (rowData[13] || '');
 
-  // Smart Pax Calculation: Prioritize activity pax (snorkellers + divers + course)
+  // Smart Pax Calculation: Prioritize explicit GUEST_PAX override if set, otherwise activity pax
   const actPax = getRowActivityPaxClient(rowData);
-  let cardPax = actPax > 0 ? actPax : 0;
+  const explicitGuestPax = booking?.overrideMeta?.fields?.GUEST_PAX
+    ? parseInt(booking.overrideMeta.fields.GUEST_PAX, 10)
+    : 0;
+  let cardPax = (explicitGuestPax > 0) ? explicitGuestPax : (actPax > 0 ? actPax : 0);
   if (!cardPax && roomPaxIndex !== -1 && rowData[roomPaxIndex] && rowData[roomPaxIndex] !== '—') {
     const parsed = parsePaxString(rowData[roomPaxIndex].toString());
     cardPax = parsed > 0 ? parsed : 0;
@@ -2973,9 +2985,26 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   document.getElementById('edit-field-staying-days').value = getFieldVal('STAYING DAYS', ['DAYS', 'STAY DURATION', 'ROOM DETAILS'], 9);
 
   // Activities (supports SNORKELLING with double-L, SNORKELING, SNORKEL, or col 4)
-  document.getElementById('edit-field-snorkeling').value = getFieldVal('SNORKELLING', ['SNORKELING', 'SNORKEL'], 4);
-  document.getElementById('edit-field-diving').value = getFieldVal('DIVING', ['DIVE'], 5);
-  document.getElementById('edit-field-course').value = getFieldVal('COURSE', ['COURSES'], 6);
+  const snorkInput = document.getElementById('edit-field-snorkeling');
+  const diveInput = document.getElementById('edit-field-diving');
+  const courseInput = document.getElementById('edit-field-course');
+  snorkInput.value = getFieldVal('SNORKELLING', ['SNORKELING', 'SNORKEL'], 4);
+  diveInput.value = getFieldVal('DIVING', ['DIVE'], 5);
+  courseInput.value = getFieldVal('COURSE', ['COURSES'], 6);
+
+  const recalcModalActivityPax = () => {
+    const sPax = parseSnorkPaxClient(snorkInput.value || '');
+    const dPax = parseDivingPaxClient(diveInput.value || '');
+    const cPax = parseCoursePaxClient(courseInput.value || '');
+    const sum = sPax + dPax + cPax;
+    if (sum > 0) {
+      const gpEl = document.getElementById('edit-field-guestpax');
+      if (gpEl) gpEl.value = String(sum);
+    }
+  };
+  snorkInput.oninput = recalcModalActivityPax;
+  diveInput.oninput = recalcModalActivityPax;
+  courseInput.oninput = recalcModalActivityPax;
 
   // Room Information
   document.getElementById('edit-field-room').value = getFieldVal('ROOM', ['ROOM ASSIGNED', 'ROOM_ASSIGNED'], 25);
@@ -2986,17 +3015,28 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   try {
     actPax = getRowActivityPaxClient(rowData);
   } catch (e) {}
-  const guestPaxVal = (actPax > 0) ? String(actPax) : (booking?.pax ? String(booking.pax) : '');
+  const explicitGuestPax = booking?.overrideMeta?.fields?.GUEST_PAX
+    ? String(booking.overrideMeta.fields.GUEST_PAX).trim()
+    : '';
+  const guestPaxVal = explicitGuestPax || ((actPax > 0) ? String(actPax) : (booking?.pax ? String(booking.pax) : ''));
   const roomPaxVal = getFieldVal('ROOM_PAX', ['ROOM PAX'], 26);
 
   document.getElementById('edit-field-guestpax').value = guestPaxVal || roomPaxVal || '';
   document.getElementById('edit-field-roompax').value = roomPaxVal || guestPaxVal || '';
 
-  // Financials
-  document.getElementById('edit-field-total').value = getFieldVal('TOTAL AMOUNT', ['TOTAL'], 18);
-  document.getElementById('edit-field-deposit').value = getFieldVal('DEPOSIT', [], 19);
-  document.getElementById('edit-field-balance').value = getFieldVal('BALANCE', [], 20);
-  document.getElementById('edit-field-status').value = getFieldVal('STATUS', [], 21);
+  // Financials (Admin only)
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const totalInput = document.getElementById('edit-field-total');
+  const finGrid = totalInput ? totalInput.closest('div[style*="grid-template-columns"]') : null;
+  if (finGrid) {
+    finGrid.style.display = isAdmin ? 'grid' : 'none';
+  }
+  if (isAdmin) {
+    document.getElementById('edit-field-total').value = getFieldVal('TOTAL AMOUNT', ['TOTAL'], 18);
+    document.getElementById('edit-field-deposit').value = getFieldVal('DEPOSIT', [], 19);
+    document.getElementById('edit-field-balance').value = getFieldVal('BALANCE', [], 20);
+    document.getElementById('edit-field-status').value = getFieldVal('STATUS', [], 21);
+  }
 
   // Special Request & Remarks
   document.getElementById('edit-field-special-request').value = getFieldVal('SPECIAL REQUEST', ['SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'], 13);
@@ -3106,13 +3146,16 @@ async function saveBookingEdit(event) {
     'ROOM TYPE': document.getElementById('edit-field-roomtype').value.trim(),
     'ROOM_TYPE': document.getElementById('edit-field-roomtype').value.trim(),
     'GUEST_PAX': document.getElementById('edit-field-guestpax').value.trim(),
-    'TOTAL AMOUNT': document.getElementById('edit-field-total').value.trim(),
-    'DEPOSIT': document.getElementById('edit-field-deposit').value.trim(),
-    'BALANCE': document.getElementById('edit-field-balance').value.trim(),
-    'STATUS': document.getElementById('edit-field-status').value.trim(),
     'SPECIAL REQUEST': document.getElementById('edit-field-special-request').value.trim(),
     'REMARK': document.getElementById('edit-field-remark').value.trim()
   };
+
+  if (currentUser && currentUser.role === 'admin') {
+    fields['TOTAL AMOUNT'] = document.getElementById('edit-field-total').value.trim();
+    fields['DEPOSIT'] = document.getElementById('edit-field-deposit').value.trim();
+    fields['BALANCE'] = document.getElementById('edit-field-balance').value.trim();
+    fields['STATUS'] = document.getElementById('edit-field-status').value.trim();
+  }
 
   // Only override ROOM if user specified a non-empty value; if left empty, let live calendar assign it
   if (roomInputVal) {
@@ -3129,7 +3172,7 @@ async function saveBookingEdit(event) {
 
     const data = await res.json();
     if (res.ok && data.success) {
-      localStorage.removeItem(DASHBOARD_CACHE_KEY); // Invalidate client cache
+      clearDashboardCache();
       closeEditBookingModal();
       showToast('✅ Booking details overridden on Dashboard successfully!');
       await loadData(true);
@@ -3168,7 +3211,7 @@ async function revertBookingEdit() {
 
     const data = await res.json();
     if (res.ok && data.success) {
-      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      clearDashboardCache();
       closeEditBookingModal();
       showToast('✅ Booking reverted to original sheet values!');
       await loadData(true);
@@ -3274,7 +3317,7 @@ async function revertBookingOverrideDirect(key, rowIndex, event) {
 
     const data = await res.json();
     if (res.ok && data.success) {
-      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      clearDashboardCache();
       showToast('✅ Booking reverted to original sheet values!');
       await loadData(true);
     } else {
@@ -3918,7 +3961,7 @@ async function saveWhatsAppPhoneDirect() {
     const data = await res.json();
     if (res.ok && data.success) {
       showToast('✅ Customer contact numbers saved to booking!');
-      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      clearDashboardCache();
       renderWhatsAppContactPicker();
       await loadData(true);
     } else {

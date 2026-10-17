@@ -60,8 +60,15 @@ async function saveOverride(bookingKey, overrideData, updatedBy) {
   if (!bookingKey) throw new Error('Booking key is required');
 
   const overrides = await loadOverrides(true);
+  const existing = overrides[bookingKey] || {};
+  const mergedFields = {
+    ...(existing.fields || {}),
+    ...(overrideData && overrideData.fields ? overrideData.fields : {})
+  };
   const payload = {
+    ...existing,
     ...overrideData,
+    fields: mergedFields,
     isOverridden: true,
     updatedBy: updatedBy || 'Admin',
     updatedAt: new Date().toISOString()
@@ -228,16 +235,28 @@ const FIXED_COLUMN_INDEX_MAPPINGS = {
   22: ['REMARK', 'REMARKS'],
 };
 
+const NON_EMPTY_ONLY_HEADERS = new Set([
+  'TOTAL AMOUNT', 'TOTAL', 'DEPOSIT', 'BALANCE', 'STATUS', 'ROOM', 'ROOM_PAX'
+]);
+
 function getOverriddenValue(overrideFields, headerName) {
   if (!overrideFields || !headerName) return undefined;
   const norm = headerName.toString().trim().toUpperCase();
-  if (overrideFields[norm] !== undefined) return overrideFields[norm];
+  const requireNonEmpty = NON_EMPTY_ONLY_HEADERS.has(norm);
+
+  if (overrideFields[norm] !== undefined) {
+    if (!requireNonEmpty || String(overrideFields[norm]).trim() !== '') {
+      return overrideFields[norm];
+    }
+  }
 
   const aliases = HEADER_ALIASES[norm];
   if (aliases) {
     for (const alias of aliases) {
       if (overrideFields[alias] !== undefined) {
-        return overrideFields[alias];
+        if (!requireNonEmpty || String(overrideFields[alias]).trim() !== '') {
+          return overrideFields[alias];
+        }
       }
     }
   }

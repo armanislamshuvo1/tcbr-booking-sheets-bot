@@ -592,28 +592,76 @@ async function getAuditLogsHandler(req, res) {
  */
 async function updateBookingOverride(req, res) {
   try {
-    const { saveOverride, getBookingKey } = require('./overrides');
+    const { saveOverride, applyOverridesToRows } = require('./overrides');
     const { bookingKey: inputKey, rowIndex, fields } = req.body;
     if (!fields || typeof fields !== 'object') {
       return res.status(400).json({ error: 'Fields object is required for booking override.' });
     }
 
     let finalKey = inputKey;
-    if (typeof rowIndex === 'number' && !isNaN(rowIndex)) {
-      finalKey = `ROW_${rowIndex}`;
+    const parsedRowIndex = typeof rowIndex === 'number' && !isNaN(rowIndex)
+      ? rowIndex
+      : (typeof rowIndex === 'string' && !isNaN(parseInt(rowIndex, 10)) ? parseInt(rowIndex, 10) : undefined);
+
+    if (parsedRowIndex !== undefined) {
+      finalKey = `ROW_${parsedRowIndex}`;
     }
 
     if (!finalKey) {
       return res.status(400).json({ error: 'Could not determine booking key for override.' });
     }
 
-    const payload = await saveOverride(finalKey, { fields }, req.user.username);
+    const sanitizedFields = { ...fields };
+    if (!req.user || req.user.role !== 'admin') {
+      delete sanitizedFields['TOTAL AMOUNT'];
+      delete sanitizedFields['TOTAL'];
+      delete sanitizedFields['DEPOSIT'];
+      delete sanitizedFields['BALANCE'];
+      delete sanitizedFields['STATUS'];
+    }
+
+    const payload = await saveOverride(finalKey, { fields: sanitizedFields }, req.user.username);
+
+    // Immediately sync the overridden row into the active baseline snapshot so hourly checks don't see a false diff
+    try {
+      const snapshot = await loadSnapshot();
+      if (snapshot && parsedRowIndex !== undefined) {
+        const headers = snapshot.headers || [];
+        const singleOverrideMap = { [finalKey]: payload };
+
+        if (Array.isArray(snapshot.allRows)) {
+          const idx = snapshot.allRows.findIndex(r => r && r.rowIndex === parsedRowIndex);
+          if (idx !== -1) {
+            const [updatedEntry] = await applyOverridesToRows([snapshot.allRows[idx]], headers, singleOverrideMap);
+            snapshot.allRows[idx] = { row: updatedEntry.row, rowIndex: parsedRowIndex };
+          }
+        }
+        if (snapshot.monthMap && typeof snapshot.monthMap === 'object') {
+          for (const [mKey, mEntry] of Object.entries(snapshot.monthMap)) {
+            if (mEntry && mEntry.rowIndex === parsedRowIndex) {
+              const [updatedEntry] = await applyOverridesToRows([mEntry], headers, singleOverrideMap);
+              snapshot.monthMap[mKey] = { ...mEntry, row: updatedEntry.row };
+            }
+          }
+        }
+        const { getDb } = require('./snapshot');
+        const db = await getDb();
+        if (db) {
+          await db.collection('snapshots').updateOne(
+            { type: 'current_baseline' },
+            { $set: { data: snapshot, updatedAt: new Date() } }
+          );
+        }
+      }
+    } catch (syncErr) {
+      console.warn('   ⚠️ Non-fatal error syncing snapshot on override update:', syncErr.message);
+    }
 
     await appendAuditLog({
       action: 'DASHBOARD_BOOKING_OVERRIDDEN',
       username: req.user.username,
       role: req.user.role,
-      details: `Updated dashboard override for [${finalKey}]: ${Object.keys(fields).join(', ')}`,
+      details: `Updated dashboard override for [${finalKey}]: ${Object.keys(sanitizedFields).join(', ')}`,
       ip: req.ip
     });
 
