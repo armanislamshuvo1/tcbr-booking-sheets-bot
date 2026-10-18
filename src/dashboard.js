@@ -569,8 +569,8 @@ app.post('/api/admin/snapshot/reset', requireAuth, requireAdmin, admin.resetSnap
 app.get('/api/admin/export/:type', requireAuth, requireAdmin, admin.exportData);
 app.get('/api/admin/audit-logs', requireAuth, requireAdmin, admin.getAuditLogsHandler);
 
-// Dashboard Booking Overrides & Custom Booking APIs (Accessible to Admin & Operator)
-app.post('/api/admin/bookings/create', requireAuth, requireRole('admin', 'operator'), admin.createDashboardBooking);
+// Dashboard Booking Overrides & Custom Booking APIs
+app.post('/api/admin/bookings/create', requireAuth, requireAdmin, admin.createDashboardBooking);
 app.put('/api/admin/bookings/override', requireAuth, requireRole('admin', 'operator'), admin.updateBookingOverride);
 app.delete('/api/admin/bookings/override', requireAuth, requireAdmin, admin.revertBookingOverride);
 

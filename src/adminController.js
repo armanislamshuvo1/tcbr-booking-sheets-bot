@@ -728,6 +728,10 @@ async function updateBookingOverride(req, res) {
  */
 async function createDashboardBooking(req, res) {
   try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Only administrators can create new bookings.' });
+    }
+
     const { createCustomBooking } = require('./overrides');
     const { parseDate, isBookingInCurrentMonth, rowKey } = require('./detector');
     const { fields } = req.body || {};

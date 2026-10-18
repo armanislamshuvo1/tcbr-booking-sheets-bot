@@ -432,7 +432,7 @@ function setTab(tabName) {
 
   const createBookingBtn = document.getElementById('create-booking-btn');
   if (createBookingBtn) {
-    createBookingBtn.style.display = canManageBookingNumbers() ? 'inline-flex' : 'none';
+    createBookingBtn.style.display = (currentUser && currentUser.role === 'admin') ? 'inline-flex' : 'none';
   }
 
   renderContent();
@@ -2261,7 +2261,7 @@ function setupUserUI(user) {
 
   const createBookingBtn = document.getElementById('create-booking-btn');
   if (createBookingBtn) {
-    createBookingBtn.style.display = (userRole === 'admin' || userRole === 'operator') ? 'inline-flex' : 'none';
+    createBookingBtn.style.display = userRole === 'admin' ? 'inline-flex' : 'none';
   }
 
   // Role-based visibility for Tabs, Actions & Stat Cards
@@ -3141,8 +3141,8 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
 }
 
 function openCreateBookingModal() {
-  if (!canManageBookingNumbers()) {
-    showToast('❌ Only Admin and Operator can create bookings.');
+  if (!currentUser || currentUser.role !== 'admin') {
+    showToast('❌ Only administrators can create new bookings.');
     return;
   }
 
