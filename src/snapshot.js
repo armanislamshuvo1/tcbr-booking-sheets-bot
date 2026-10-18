@@ -146,10 +146,14 @@ async function saveSnapshot(
     if (!row || row.every(cell => !cell || cell.toString().trim() === '')) {
       continue;
     }
-    allRowsData.push({
+    const rIdx = row._customRowIndex !== undefined ? row._customRowIndex : i;
+    const rowEntry = {
       row,
-      rowIndex: i
-    });
+      rowIndex: rIdx
+    };
+    if (row._inheritedMeta) rowEntry.inheritedMeta = row._inheritedMeta;
+    if (row._isCustomBooking) rowEntry.isCustomBooking = true;
+    allRowsData.push(rowEntry);
   }
 
   const snapshot = {
@@ -170,12 +174,15 @@ async function saveSnapshot(
     if (!entry) continue;
     const r = Array.isArray(entry.row) ? entry.row : (Array.isArray(entry) ? entry : null);
     if (!r) continue;
-    const rIdx = entry.rowIndex !== undefined ? entry.rowIndex : idx;
+    const rIdx = entry.rowIndex !== undefined ? entry.rowIndex : (r._customRowIndex !== undefined ? r._customRowIndex : idx);
     const key = rowKey(r, rIdx);
-    snapshot.monthMap[key] = {
+    const monthEntry = {
       row: r,
       rowIndex: rIdx,
     };
+    if (entry.inheritedMeta || r._inheritedMeta) monthEntry.inheritedMeta = entry.inheritedMeta || r._inheritedMeta;
+    if (entry.isCustomBooking || r._isCustomBooking) monthEntry.isCustomBooking = true;
+    snapshot.monthMap[key] = monthEntry;
   }
 
   // Update in-memory cache immediately
@@ -236,6 +243,33 @@ async function updateSnapshotReportState(fields = {}) {
 
   fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(updated, null, 2), 'utf-8');
   return updated;
+}
+
+/**
+ * Persist a mutated snapshot object directly to cache, MongoDB, and local disk fallback.
+ */
+async function persistRawSnapshot(snapshot) {
+  if (!snapshot) return null;
+  cachedSnapshot = snapshot;
+  lastSnapshotLoadTime = Date.now();
+
+  const db = await getDb();
+  if (db) {
+    try {
+      const collection = db.collection('snapshots');
+      await collection.updateOne(
+        { type: 'current_baseline' },
+        { $set: { type: 'current_baseline', data: snapshot, updatedAt: new Date() } },
+        { upsert: true }
+      );
+      return snapshot;
+    } catch (err) {
+      console.error('   ❌ MongoDB persistRawSnapshot error:', err.message);
+    }
+  }
+
+  fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2), 'utf-8');
+  return snapshot;
 }
 
 /**
@@ -793,6 +827,7 @@ module.exports = {
   getDb,
   loadSnapshot,
   saveSnapshot,
+  persistRawSnapshot,
   updateSnapshotReportState,
   appendHistory,
   appendErrorLog,

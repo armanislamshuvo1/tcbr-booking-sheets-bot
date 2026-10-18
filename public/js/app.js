@@ -430,6 +430,11 @@ function setTab(tabName) {
   if (monthFilterInput) monthFilterInput.value = '';
   displayLimit = 50;
 
+  const createBookingBtn = document.getElementById('create-booking-btn');
+  if (createBookingBtn) {
+    createBookingBtn.style.display = canManageBookingNumbers() ? 'inline-flex' : 'none';
+  }
+
   renderContent();
 }
 
@@ -1716,8 +1721,13 @@ function buildBookingCard(booking, idx) {
   const contactsList = canAccessContacts() ? extractBookingContacts(booking, rowData, name) : [];
   const contactsSummary = contactsList.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
 
+  const sheetRowLabel = booking.isCustomBooking
+    ? `Custom (#${booking.rowIndex})`
+    : (booking.rowIndex !== undefined ? `#${booking.rowIndex + 1}` : '—');
+
   // Fields requested by user to display in detail table
   const fields = [
+    { key: 'SHEET ROW', val: sheetRowLabel },
     { key: 'CODE', val: rowData[1] },
     { key: 'PIC', val: rowData[2] },
     { key: 'NAME', val: rowData[3] },
@@ -1737,7 +1747,7 @@ function buildBookingCard(booking, idx) {
   ];
 
   if (canAccessContacts() && contactsSummary) {
-    fields.splice(3, 0, { key: 'PHONE / WHATSAPP', val: contactsSummary });
+    fields.splice(4, 0, { key: 'PHONE / WHATSAPP', val: contactsSummary });
   }
 
   // RBAC: ONLY Admin will see payment details (hidden from operator, jetty_staff, and dc)
@@ -1759,21 +1769,34 @@ function buildBookingCard(booking, idx) {
     if (statusVal) fields.push({ key: 'PAYMENT STATUS', val: statusVal });
   }
 
+  const inheritedFieldsSet = new Set((booking.inheritedMeta && Array.isArray(booking.inheritedMeta.fields)) ? booking.inheritedMeta.fields : []);
+  const overriddenFieldsSet = new Set(booking.overrideMeta && booking.overrideMeta.fields ? Object.keys(booking.overrideMeta.fields).filter(k => booking.overrideMeta.fields[k] !== '' && booking.overrideMeta.fields[k] !== undefined) : []);
+
   const rows = fields
     .map(f => {
       const val = (f.val || '').toString().trim();
       if (!val) return '';
-      return `<tr><td style="color:var(--text-secondary);width:35%">${escapeHtml(f.key)}</td><td>${escapeHtml(val)}</td></tr>`;
+      const isFieldInherited = inheritedFieldsSet.has(f.key) && !overriddenFieldsSet.has(f.key);
+      const inheritedTag = isFieldInherited
+        ? ` <span class="badge" style="font-size:0.65rem;background:rgba(88,166,255,0.12);color:var(--accent);border:1px solid rgba(88,166,255,0.3);margin-left:6px;" title="Auto-inherited from Row #${escapeHtml(String(booking.inheritedMeta.fromRow || ''))}">🔗 Inherited</span>`
+        : '';
+      return `<tr><td style="color:var(--text-secondary);width:35%">${escapeHtml(f.key)}</td><td>${escapeHtml(val)}${inheritedTag}</td></tr>`;
     })
     .filter(Boolean)
     .join('');
 
-  const overrideBadge = booking.isOverridden
-    ? `<span class="type-badge" style="background:rgba(113, 221, 25, 0.38);color:#e3b341;border:1px solid rgba(209, 82, 9, 0.4)" title="Edited on Dashboard">✏️ Edited</span>`
+  const inheritedBadge = booking.inheritedMeta
+    ? `<span class="type-badge" style="background:rgba(88,166,255,0.15);color:var(--accent);border:1px solid rgba(88,166,255,0.35);text-transform:none;margin-left:4px;display:inline-flex;align-items:center;gap:4px" title="Auto-inherited ${(booking.inheritedMeta.fields || []).join(', ')} from Row #${escapeHtml(String(booking.inheritedMeta.fromRow || ''))} (${escapeHtml(String(booking.inheritedMeta.fromCode || ''))})">🔗 Inherited #${escapeHtml(String(booking.inheritedMeta.fromRow || ''))}</span>`
     : '';
 
-  const revertBtn = (currentUser && currentUser.role === 'admin' && booking.isOverridden)
-    ? `<button class="action-btn" onclick="revertBookingOverrideDirect('${escapeHtml(String(booking.overrideMeta?.bookingKey || ''))}', ${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:rgba(248,81,73,0.15);color:var(--red);border-color:rgba(248,81,73,0.4);font-weight:600">↩️ Revert to Sheet</button>`
+  const overrideBadge = booking.isCustomBooking
+    ? `<span class="type-badge" style="background:rgba(168, 85, 247, 0.2);color:#c084fc;border:1px solid rgba(168, 85, 247, 0.45);text-transform:none;margin-left:4px" title="Created directly on the Dashboard">✨ Custom Booking</span>`
+    : (booking.isOverridden
+      ? `<span class="type-badge" style="background:rgba(113, 221, 25, 0.38);color:#e3b341;border:1px solid rgba(209, 82, 9, 0.4)" title="Edited on Dashboard">✏️ Edited</span>`
+      : '');
+
+  const revertBtn = (currentUser && currentUser.role === 'admin' && (booking.isOverridden || booking.isCustomBooking))
+    ? `<button class="action-btn" onclick="revertBookingOverrideDirect('${escapeHtml(String(booking.overrideMeta?.bookingKey || ''))}', ${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event, ${!!booking.isCustomBooking})" style="background:rgba(248,81,73,0.15);color:var(--red);border-color:rgba(248,81,73,0.4);font-weight:600">${booking.isCustomBooking ? '🗑️ Delete Booking' : '↩️ Revert to Sheet'}</button>`
     : '';
 
   const waBtn = canAccessContacts()
@@ -1781,13 +1804,24 @@ function buildBookingCard(booking, idx) {
     : '';
 
   const canEditBooking = canEditNumbers;
+  const editBtnLabel = booking.inheritedMeta && !booking.isOverridden
+    ? '✏️ Amend Inherited Details'
+    : '✏️ Edit Booking Details';
+
+  const inheritedCalloutHtml = booking.inheritedMeta
+    ? `<div style="margin-top:12px;padding:10px 14px;background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:0.8rem;color:var(--accent);">
+         <span>🔗 <b>Continuation Row (${escapeHtml(sheetRowLabel)}):</b> Auto-inherited <b>${escapeHtml((booking.inheritedMeta.fields || []).join(', '))}</b> from Row #${escapeHtml(String(booking.inheritedMeta.fromRow || ''))} (${escapeHtml(String(booking.inheritedMeta.fromCode || ''))}).</span>
+         ${canEditBooking ? `<button class="action-btn" onclick="openEditBookingModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, '${escapeHtml(String(code))}'); event.stopPropagation();" style="padding:4px 10px;font-size:0.76rem;background:var(--accent-glow);color:var(--accent);border-color:rgba(88,166,255,0.4);font-weight:600;">✏️ Amend if Incorrect</button>` : ''}
+       </div>`
+    : '';
+
   const cardActionBar = `
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap">
       ${waBtn}
       <button class="action-btn" onclick="copyBookingDetails(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, event)" style="background:var(--bg-primary);color:var(--text-primary);border-color:var(--border);font-weight:600">📋 Copy Details</button>
       ${revertBtn}
       ${canEditBooking
-        ? `<button class="action-btn" onclick="openEditBookingModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, '${escapeHtml(String(code))}')" style="background:var(--accent-glow);color:var(--accent);border-color:rgba(88,166,255,0.4);font-weight:600">✏️ Edit Booking Details</button>`
+        ? `<button class="action-btn" onclick="openEditBookingModalByIndex(${booking.rowIndex !== undefined ? booking.rowIndex : idx}, '${escapeHtml(String(code))}')" style="background:var(--accent-glow);color:var(--accent);border-color:rgba(88,166,255,0.4);font-weight:600">${editBtnLabel}</button>`
         : ''}
     </div>`;
 
@@ -1800,6 +1834,7 @@ function buildBookingCard(booking, idx) {
           <span style="font-size:0.75rem;color:var(--text-muted)">(${escapeHtml(String(pic))})</span>
           ${roomVal && roomVal !== '—' ? roomInfo.roomBadgeHtml : ''}
           ${remarkBadge}
+          ${inheritedBadge}
           ${overrideBadge}
         </div>
         <div style="display:flex;align-items:center;gap:12px">
@@ -1809,6 +1844,7 @@ function buildBookingCard(booking, idx) {
         </div>
       </div>
       <div class="card-body">
+        ${inheritedCalloutHtml}
         <table class="row-table" style="margin-top:12px">
           <thead><tr><th>Column</th><th>Value</th></tr></thead>
           <tbody>${rows || '<tr><td colspan="2" style="color:var(--text-muted)">No data</td></tr>'}</tbody>
@@ -2222,6 +2258,11 @@ function setupUserUI(user) {
 
   if (nameLabel) nameLabel.textContent = user.displayName || user.username;
   if (adminBtn) adminBtn.style.display = userRole === 'admin' ? 'inline-flex' : 'none';
+
+  const createBookingBtn = document.getElementById('create-booking-btn');
+  if (createBookingBtn) {
+    createBookingBtn.style.display = (userRole === 'admin' || userRole === 'operator') ? 'inline-flex' : 'none';
+  }
 
   // Role-based visibility for Tabs, Actions & Stat Cards
   const statsGrid = document.querySelector('.stats-grid');
@@ -2940,6 +2981,23 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   const modal = document.getElementById('edit-booking-modal');
   if (!modal) return;
 
+  const modeEl = document.getElementById('edit-booking-mode');
+  if (modeEl) modeEl.value = 'edit';
+
+  const iconEl = document.getElementById('edit-modal-icon');
+  const titleEl = document.getElementById('edit-modal-title');
+  const subtitleEl = document.getElementById('edit-modal-subtitle');
+  const saveBtnEl = document.getElementById('edit-booking-save-btn');
+
+  if (iconEl) iconEl.textContent = '✏️';
+  if (titleEl) {
+    titleEl.textContent = (booking && booking.inheritedMeta && !isOverridden)
+      ? `Amend Inherited Booking Details (Row #${(rowIndex || 0) + 1})`
+      : 'Edit Booking Details (Dashboard Only)';
+  }
+  if (subtitleEl) subtitleEl.textContent = 'Edits show on dashboard views and reports without altering the Google Sheet';
+  if (saveBtnEl) saveBtnEl.textContent = 'Save Dashboard Overrides';
+
   const getColVal = (name) => {
     if (!headers || !headers.length) return '';
     const idx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === name.toUpperCase());
@@ -3009,6 +3067,10 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   // Room Information
   document.getElementById('edit-field-room').value = getFieldVal('ROOM', ['ROOM ASSIGNED', 'ROOM_ASSIGNED'], 25);
   document.getElementById('edit-field-roomtype').value = getFieldVal('ROOM TYPE', ['ROOM_TYPE', 'ROOMTYPE'], 10);
+  const sharingEl = document.getElementById('edit-field-sharing');
+  const bedEl = document.getElementById('edit-field-bed');
+  if (sharingEl) sharingEl.value = getFieldVal('SHARING', ['ROOM SHARING'], 11);
+  if (bedEl) bedEl.value = getFieldVal('BED', ['BED ARRANGEMENT', 'BED TYPE'], 12);
 
   // Pax calculation (Activity / Headcount Pax vs Room Bed Pax)
   let actPax = 0;
@@ -3042,10 +3104,116 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   document.getElementById('edit-field-special-request').value = getFieldVal('SPECIAL REQUEST', ['SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'], 13);
   document.getElementById('edit-field-remark').value = getFieldVal('REMARK', ['REMARKS'], 22);
 
-  const banner = document.getElementById('edit-override-banner');
-  if (banner) {
-    banner.style.display = isOverridden ? 'flex' : 'none';
+  // Inherited banner
+  const inheritedBanner = document.getElementById('edit-inherited-banner');
+  const inheritedBannerText = document.getElementById('edit-inherited-banner-text');
+  if (inheritedBanner) {
+    if (booking && booking.inheritedMeta) {
+      inheritedBanner.style.display = 'block';
+      if (inheritedBannerText) {
+        const fieldsJoined = (booking.inheritedMeta.fields || []).join(', ');
+        inheritedBannerText.innerHTML = `🔗 <b>Auto-Inherited Row (#${(rowIndex || 0) + 1}):</b> Inherited <b>${escapeHtml(fieldsJoined)}</b> from parent Row #${escapeHtml(String(booking.inheritedMeta.fromRow || ''))} (<b>${escapeHtml(String(booking.inheritedMeta.fromCode || ''))}</b>). You can amend any field below if the inherited details are not right.`;
+      }
+    } else {
+      inheritedBanner.style.display = 'none';
+    }
   }
+
+  // Override / Custom Booking banner
+  const banner = document.getElementById('edit-override-banner');
+  const bannerText = document.getElementById('edit-override-banner-text');
+  const revertBtn = document.getElementById('edit-revert-btn');
+  if (banner) {
+    if (booking && booking.isCustomBooking) {
+      banner.style.display = 'flex';
+      if (bannerText) bannerText.innerHTML = '✨ <b>Custom Dashboard Booking:</b> Created directly on the dashboard.';
+      if (revertBtn) revertBtn.textContent = 'Delete Custom Booking';
+    } else if (isOverridden) {
+      banner.style.display = 'flex';
+      if (bannerText) bannerText.innerHTML = '⚠️ <b>Active Dashboard Override:</b> This booking has customized details saved locally.';
+      if (revertBtn) revertBtn.textContent = 'Revert to Sheet Values';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
+  modal.style.display = 'flex';
+}
+
+function openCreateBookingModal() {
+  if (!canManageBookingNumbers()) {
+    showToast('❌ Only Admin and Operator can create bookings.');
+    return;
+  }
+
+  const modal = document.getElementById('edit-booking-modal');
+  if (!modal) return;
+
+  const modeEl = document.getElementById('edit-booking-mode');
+  if (modeEl) modeEl.value = 'create';
+
+  currentEditingBookingKey = null;
+  currentEditingRowIndex = null;
+
+  document.getElementById('edit-booking-key').value = '';
+  document.getElementById('edit-booking-row-index').value = '';
+
+  const iconEl = document.getElementById('edit-modal-icon');
+  const titleEl = document.getElementById('edit-modal-title');
+  const subtitleEl = document.getElementById('edit-modal-subtitle');
+  const saveBtnEl = document.getElementById('edit-booking-save-btn');
+
+  if (iconEl) iconEl.textContent = '➕';
+  if (titleEl) titleEl.textContent = 'Create New Booking (Dashboard)';
+  if (subtitleEl) subtitleEl.textContent = 'Creates a persistent booking on the dashboard and includes it in all views & reports';
+  if (saveBtnEl) saveBtnEl.textContent = '➕ Create Booking';
+
+  const inheritedBanner = document.getElementById('edit-inherited-banner');
+  if (inheritedBanner) inheritedBanner.style.display = 'none';
+
+  const overrideBanner = document.getElementById('edit-override-banner');
+  if (overrideBanner) overrideBanner.style.display = 'none';
+
+  const fieldIds = [
+    'edit-field-name', 'edit-field-code', 'edit-field-pic',
+    'edit-field-checkin', 'edit-field-checkout', 'edit-field-staying-days',
+    'edit-field-snorkeling', 'edit-field-diving', 'edit-field-course',
+    'edit-field-room', 'edit-field-roomtype', 'edit-field-sharing', 'edit-field-bed',
+    'edit-field-guestpax', 'edit-field-roompax',
+    'edit-field-total', 'edit-field-deposit', 'edit-field-balance', 'edit-field-status',
+    'edit-field-special-request', 'edit-field-remark'
+  ];
+  fieldIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  const snorkInput = document.getElementById('edit-field-snorkeling');
+  const diveInput = document.getElementById('edit-field-diving');
+  const courseInput = document.getElementById('edit-field-course');
+  const recalcModalActivityPax = () => {
+    const sPax = parseSnorkPaxClient(snorkInput?.value || '');
+    const dPax = parseDivingPaxClient(diveInput?.value || '');
+    const cPax = parseCoursePaxClient(courseInput?.value || '');
+    const sum = sPax + dPax + cPax;
+    if (sum > 0) {
+      const gpEl = document.getElementById('edit-field-guestpax');
+      if (gpEl) gpEl.value = String(sum);
+    }
+  };
+  if (snorkInput) snorkInput.oninput = recalcModalActivityPax;
+  if (diveInput) diveInput.oninput = recalcModalActivityPax;
+  if (courseInput) courseInput.oninput = recalcModalActivityPax;
+
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  const totalInput = document.getElementById('edit-field-total');
+  const finGrid = totalInput ? totalInput.closest('div[style*="grid-template-columns"]') : null;
+  if (finGrid) {
+    finGrid.style.display = isAdmin ? 'grid' : 'none';
+  }
+
+  editContactsList = [{ name: '', phone: '' }];
+  renderEditContactsList();
 
   modal.style.display = 'flex';
 }
@@ -3110,14 +3278,10 @@ async function saveBookingEdit(event) {
     return;
   }
 
+  const mode = document.getElementById('edit-booking-mode')?.value || 'edit';
   const key = document.getElementById('edit-booking-key').value;
   const rowIndex = parseInt(document.getElementById('edit-booking-row-index').value, 10);
   const saveBtn = document.getElementById('edit-booking-save-btn');
-
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving Overrides...';
-  }
 
   // Parse contacts
   const validContacts = (editContactsList || [])
@@ -3127,6 +3291,8 @@ async function saveBookingEdit(event) {
   const phoneStr = validContacts.map(c => (c.name ? `${c.name}: ${c.phone}` : c.phone)).join(', ');
   const roomInputVal = document.getElementById('edit-field-room').value.trim();
   const roomPaxInputVal = document.getElementById('edit-field-roompax').value.trim();
+  const sharingInputVal = document.getElementById('edit-field-sharing')?.value.trim() || '';
+  const bedInputVal = document.getElementById('edit-field-bed')?.value.trim() || '';
 
   const fields = {
     'NAME': document.getElementById('edit-field-name').value.trim(),
@@ -3145,6 +3311,8 @@ async function saveBookingEdit(event) {
     'COURSE': document.getElementById('edit-field-course').value.trim(),
     'ROOM TYPE': document.getElementById('edit-field-roomtype').value.trim(),
     'ROOM_TYPE': document.getElementById('edit-field-roomtype').value.trim(),
+    'SHARING': sharingInputVal,
+    'BED': bedInputVal,
     'GUEST_PAX': document.getElementById('edit-field-guestpax').value.trim(),
     'SPECIAL REQUEST': document.getElementById('edit-field-special-request').value.trim(),
     'REMARK': document.getElementById('edit-field-remark').value.trim()
@@ -3161,33 +3329,57 @@ async function saveBookingEdit(event) {
   if (roomInputVal) {
     fields['ROOM'] = roomInputVal;
     if (roomPaxInputVal) fields['ROOM_PAX'] = roomPaxInputVal;
+  } else if (roomPaxInputVal) {
+    fields['ROOM_PAX'] = roomPaxInputVal;
+  }
+
+  if (mode === 'create') {
+    if (!fields['NAME'] && !fields['CODE']) {
+      showToast('❌ Please enter at least a Customer Name or Booking Code.');
+      return;
+    }
+    if (!fields['CHECK IN'] || !fields['CHECK OUT']) {
+      showToast('❌ Check-In and Check-Out dates are required.');
+      return;
+    }
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = mode === 'create' ? 'Creating Booking...' : 'Saving Overrides...';
   }
 
   try {
-    const res = await authFetch('/api/admin/bookings/override', {
-      method: 'PUT',
+    const endpoint = mode === 'create' ? '/api/admin/bookings/create' : '/api/admin/bookings/override';
+    const method = mode === 'create' ? 'POST' : 'PUT';
+    const bodyPayload = mode === 'create' ? { fields } : { bookingKey: key, rowIndex, fields };
+
+    const res = await authFetch(endpoint, {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bookingKey: key, rowIndex, fields })
+      body: JSON.stringify(bodyPayload)
     });
 
     const data = await res.json();
     if (res.ok && data.success) {
       clearDashboardCache();
       closeEditBookingModal();
-      showToast('✅ Booking details overridden on Dashboard successfully!');
+      showToast(mode === 'create'
+        ? '✅ Custom booking created on Dashboard successfully!'
+        : '✅ Booking details overridden on Dashboard successfully!');
       await loadData(true);
     } else {
-      showToast('❌ Error: ' + (data.error || 'Failed to save override.'));
+      showToast('❌ Error: ' + (data.error || 'Failed to save booking.'));
     }
   } catch (err) {
     if (err.message !== 'Unauthorized') {
       console.error(err);
-      showToast('❌ Network error saving booking override.');
+      showToast('❌ Network error saving booking.');
     }
   } finally {
     if (saveBtn) {
       saveBtn.disabled = false;
-      saveBtn.textContent = 'Save Dashboard Overrides';
+      saveBtn.textContent = mode === 'create' ? '➕ Create Booking' : 'Save Dashboard Overrides';
     }
   }
 }
@@ -3198,7 +3390,12 @@ async function revertBookingEdit() {
   const rowIndex = parseInt(rowIndexVal, 10);
   if (!key && isNaN(rowIndex)) return;
 
-  if (!confirm('Are you sure you want to revert this booking back to original Google Sheet values?')) {
+  const isCustom = !isNaN(rowIndex) && rowIndex >= 100000;
+  const promptText = isCustom
+    ? 'Are you sure you want to permanently delete this custom dashboard booking?'
+    : 'Are you sure you want to revert this booking back to original Google Sheet values?';
+
+  if (!confirm(promptText)) {
     return;
   }
 
@@ -3213,7 +3410,7 @@ async function revertBookingEdit() {
     if (res.ok && data.success) {
       clearDashboardCache();
       closeEditBookingModal();
-      showToast('✅ Booking reverted to original sheet values!');
+      showToast(isCustom ? '🗑️ Custom booking deleted!' : '✅ Booking reverted to original sheet values!');
       await loadData(true);
     } else {
       showToast('❌ Error: ' + (data.error || 'Failed to revert override.'));
@@ -3301,10 +3498,14 @@ function copyBookingDetails(rowIndex, event) {
   copyTextToClipboard(summary, `📋 Booking details for ${name} copied!`);
 }
 
-async function revertBookingOverrideDirect(key, rowIndex, event) {
+async function revertBookingOverrideDirect(key, rowIndex, event, isCustomBooking = false) {
   if (event) event.stopPropagation();
   const overrideKey = key || `ROW_${rowIndex}`;
-  if (!confirm('Are you sure you want to revert this booking back to original Google Sheet values?')) {
+  const isCustom = isCustomBooking || (typeof rowIndex === 'number' && rowIndex >= 100000);
+  const promptText = isCustom
+    ? 'Are you sure you want to permanently delete this custom dashboard booking?'
+    : 'Are you sure you want to revert this booking back to original Google Sheet values?';
+  if (!confirm(promptText)) {
     return;
   }
 
@@ -3318,7 +3519,7 @@ async function revertBookingOverrideDirect(key, rowIndex, event) {
     const data = await res.json();
     if (res.ok && data.success) {
       clearDashboardCache();
-      showToast('✅ Booking reverted to original sheet values!');
+      showToast(isCustom ? '🗑️ Custom booking deleted!' : '✅ Booking reverted to original sheet values!');
       await loadData(true);
     } else {
       showToast('❌ Error: ' + (data.error || 'Failed to revert override.'));

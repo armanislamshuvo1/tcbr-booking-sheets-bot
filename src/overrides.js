@@ -207,6 +207,8 @@ const HEADER_ALIASES = {
   'PIC': ['PIC', 'PERSON IN CHARGE'],
   'STAYING DAYS': ['STAYING DAYS', 'DAYS', 'STAY DURATION'],
   'ROOM TYPE': ['ROOM TYPE', 'ROOM_TYPE', 'ROOMTYPE'],
+  'SHARING': ['SHARING', 'ROOM SHARING'],
+  'BED': ['BED', 'BED TYPE', 'BEDDING'],
   'SPECIAL REQUEST': ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'REQUEST'],
   'GUEST_PAX': ['GUEST_PAX', 'GUESTS', 'PAX'],
   'PHONE': ['PHONE', 'CONTACT', 'WHATSAPP', 'MOBILE', 'TEL', 'PHONE NUMBER', 'CONTACT NUMBER', 'HP', 'HANDPHONE'],
@@ -225,8 +227,8 @@ const FIXED_COLUMN_INDEX_MAPPINGS = {
   8: ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT'],
   9: ['STAYING DAYS', 'DAYS', 'STAY DURATION'],
   10: ['ROOM TYPE', 'ROOM_TYPE', 'ROOMTYPE'],
-  11: ['SHARING'],
-  12: ['BED'],
+  11: ['SHARING', 'ROOM SHARING'],
+  12: ['BED', 'BED TYPE', 'BEDDING'],
   13: ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'REQUEST'],
   18: ['TOTAL AMOUNT', 'TOTAL'],
   19: ['DEPOSIT'],
@@ -275,6 +277,38 @@ function getBookingKey(row, headers, rowIndex) {
 }
 
 /**
+ * Attaches non-enumerable metadata onto a row array so array consumers (like saveSnapshot) preserve it.
+ */
+function attachRowMeta(rowArr, meta = {}) {
+  if (!Array.isArray(rowArr)) return rowArr;
+  if (meta.inheritedMeta !== undefined) {
+    Object.defineProperty(rowArr, '_inheritedMeta', {
+      value: meta.inheritedMeta,
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+  }
+  if (meta.isCustomBooking !== undefined) {
+    Object.defineProperty(rowArr, '_isCustomBooking', {
+      value: !!meta.isCustomBooking,
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+  }
+  if (meta.customRowIndex !== undefined) {
+    Object.defineProperty(rowArr, '_customRowIndex', {
+      value: meta.customRowIndex,
+      writable: true,
+      configurable: true,
+      enumerable: false
+    });
+  }
+  return rowArr;
+}
+
+/**
  * Applies active overrides onto a list of row objects or raw row arrays.
  * Returns enriched rows array with override values merged in.
  */
@@ -287,8 +321,19 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
   return bookingEntries.map(entry => {
     // Handle both raw row array and object { row, rowIndex } formats
     const isObject = typeof entry === 'object' && entry !== null && Array.isArray(entry.row);
-    const row = isObject ? [...entry.row] : (Array.isArray(entry) ? [...entry] : entry);
-    const rowIndex = isObject ? entry.rowIndex : undefined;
+    const origRow = isObject ? entry.row : (Array.isArray(entry) ? entry : null);
+    const row = origRow ? [...origRow] : entry;
+    const rowIndex = isObject ? entry.rowIndex : (origRow && origRow._customRowIndex !== undefined ? origRow._customRowIndex : undefined);
+    const inheritedMeta = (isObject && entry.inheritedMeta) || (origRow && origRow._inheritedMeta) || null;
+    const isCustomBooking = Boolean((isObject && entry.isCustomBooking) || (origRow && origRow._isCustomBooking));
+
+    if (origRow && Array.isArray(row)) {
+      attachRowMeta(row, {
+        inheritedMeta,
+        isCustomBooking,
+        customRowIndex: origRow._customRowIndex
+      });
+    }
 
     if (rowIndex === undefined || rowIndex === null) {
       return entry;
@@ -297,7 +342,16 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
     const bookingKey = `ROW_${rowIndex}`;
     const override = overrides[bookingKey];
 
-    if (!override) return entry;
+    if (!override) {
+      if (isObject && (inheritedMeta || isCustomBooking)) {
+        return {
+          ...entry,
+          ...(inheritedMeta ? { inheritedMeta } : {}),
+          ...(isCustomBooking ? { isCustomBooking: true } : {})
+        };
+      }
+      return entry;
+    }
 
     // Clone row array so we don't mutate original reference directly
     const mergedRow = [...row];
@@ -337,14 +391,26 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
       }
     }
 
+    const resolvedIsCustom = isCustomBooking || !!override.isCustomBooking;
+    attachRowMeta(mergedRow, {
+      inheritedMeta,
+      isCustomBooking: resolvedIsCustom,
+      customRowIndex: resolvedIsCustom ? rowIndex : undefined
+    });
+
     if (isObject) {
       const resEntry = {
         ...entry,
         row: mergedRow,
         isOverridden: true,
+        ...(inheritedMeta ? { inheritedMeta } : {}),
+        ...(resolvedIsCustom ? { isCustomBooking: true } : {}),
         overrideMeta: {
           updatedBy: override.updatedBy,
           updatedAt: override.updatedAt,
+          createdBy: override.createdBy || override.updatedBy,
+          createdAt: override.createdAt || override.updatedAt,
+          isCustomBooking: resolvedIsCustom,
           bookingKey,
           fields: override.fields || {}
         }
@@ -363,9 +429,13 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
     } else if (Array.isArray(entry)) {
       // Attach non-enumerable properties or wrapper metadata if needed
       mergedRow.isOverridden = true;
+      mergedRow.isCustomBooking = resolvedIsCustom;
       mergedRow.overrideMeta = {
         updatedBy: override.updatedBy,
         updatedAt: override.updatedAt,
+        createdBy: override.createdBy || override.updatedBy,
+        createdAt: override.createdAt || override.updatedAt,
+        isCustomBooking: resolvedIsCustom,
         bookingKey,
         fields: override.fields || {}
       };
@@ -382,10 +452,152 @@ async function applyOverridesToRows(bookingEntries, headers, explicitOverrides =
   });
 }
 
+/**
+ * Builds a complete row array and booking object from a custom booking override entry.
+ */
+function buildCustomBookingEntry(bookingKey, override, headers = []) {
+  const rowIndex = typeof override.rowIndex === 'number'
+    ? override.rowIndex
+    : parseInt(String(bookingKey).replace(/^ROW_/, ''), 10);
+
+  const colCount = Math.max((headers && headers.length) || 27, 27);
+  const baseRow = new Array(colCount).fill('');
+
+  const colorIdx = (headers || []).findIndex(h => h && h.toString().trim().toUpperCase() === 'ROW_COLOR');
+  const roomIdx = (headers || []).findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
+  const roomPaxIdx = (headers || []).findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
+
+  baseRow[colorIdx !== -1 ? colorIdx : (colCount - 3)] = override.fields?.ROW_COLOR || 'WHITE';
+  baseRow[roomIdx !== -1 ? roomIdx : (colCount - 2)] = override.fields?.ROOM || '—';
+  baseRow[roomPaxIdx !== -1 ? roomPaxIdx : (colCount - 1)] = override.fields?.ROOM_PAX || override.fields?.GUEST_PAX || '—';
+
+  const fields = override.fields || {};
+
+  if (headers && Array.isArray(headers)) {
+    headers.forEach((headerName, colIdx) => {
+      if (!headerName) return;
+      const val = getOverriddenValue(fields, headerName);
+      if (val !== undefined) {
+        baseRow[colIdx] = val;
+      }
+    });
+  }
+
+  for (const [colIdxStr, fieldAliases] of Object.entries(FIXED_COLUMN_INDEX_MAPPINGS)) {
+    const colIdx = parseInt(colIdxStr, 10);
+    if (baseRow.length > colIdx) {
+      for (const alias of fieldAliases) {
+        if (fields[alias] !== undefined && fields[alias] !== '') {
+          baseRow[colIdx] = fields[alias];
+          break;
+        }
+      }
+    }
+  }
+
+  if (fields.ROOM) {
+    baseRow[roomIdx !== -1 ? roomIdx : (colCount - 2)] = fields.ROOM;
+  }
+  if (fields.ROOM_PAX) {
+    baseRow[roomPaxIdx !== -1 ? roomPaxIdx : (colCount - 1)] = fields.ROOM_PAX;
+  }
+
+  attachRowMeta(baseRow, {
+    isCustomBooking: true,
+    customRowIndex: rowIndex
+  });
+
+  const entry = {
+    row: baseRow,
+    rowIndex,
+    isOverridden: true,
+    isCustomBooking: true,
+    overrideMeta: {
+      updatedBy: override.updatedBy,
+      updatedAt: override.updatedAt,
+      createdBy: override.createdBy || override.updatedBy,
+      createdAt: override.createdAt || override.updatedAt,
+      isCustomBooking: true,
+      bookingKey: `ROW_${rowIndex}`,
+      fields
+    }
+  };
+
+  if (fields.GUEST_PAX) {
+    const p = parseInt(fields.GUEST_PAX, 10);
+    if (!isNaN(p) && p > 0) entry.pax = p;
+  }
+  if (fields.CONTACTS) {
+    entry.contacts = fields.CONTACTS;
+  }
+  if (fields.PHONE || fields.CONTACT || fields.WHATSAPP || fields.TEL || fields.MOBILE) {
+    entry.phone = (fields.PHONE || fields.CONTACT || fields.WHATSAPP || fields.TEL || fields.MOBILE || '').toString().trim();
+  }
+
+  return entry;
+}
+
+/**
+ * Creates a brand-new dashboard custom booking with a unique synthetic rowIndex (>= 100000).
+ */
+async function createCustomBooking(fields, createdBy, headers = []) {
+  const overrides = await loadOverrides(true);
+  let maxCustomIdx = 99999;
+
+  for (const [k, val] of Object.entries(overrides || {})) {
+    const idxFromKey = k.startsWith('ROW_') ? parseInt(k.replace('ROW_', ''), 10) : NaN;
+    const idxFromVal = typeof val?.rowIndex === 'number' ? val.rowIndex : NaN;
+    const candidate = !isNaN(idxFromVal) ? idxFromVal : idxFromKey;
+    if (!isNaN(candidate) && candidate >= 100000 && candidate > maxCustomIdx) {
+      maxCustomIdx = candidate;
+    }
+  }
+
+  const newRowIndex = maxCustomIdx + 1;
+  const bookingKey = `ROW_${newRowIndex}`;
+  const nowIso = new Date().toISOString();
+
+  const payload = await saveOverride(
+    bookingKey,
+    {
+      fields: fields || {},
+      rowIndex: newRowIndex,
+      isCustomBooking: true,
+      createdBy: createdBy || 'Admin',
+      createdAt: nowIso
+    },
+    createdBy || 'Admin'
+  );
+
+  return buildCustomBookingEntry(bookingKey, payload, headers);
+}
+
+/**
+ * Returns all active custom bookings formatted as booking entries.
+ */
+async function getCustomBookingsAsRows(headers = [], explicitOverrides = null) {
+  const overrides = explicitOverrides || await module.exports.loadOverrides();
+  if (!overrides) return [];
+
+  const list = [];
+  for (const [bookingKey, ov] of Object.entries(overrides)) {
+    if (ov && ov.isCustomBooking) {
+      list.push(buildCustomBookingEntry(bookingKey, ov, headers));
+    }
+  }
+
+  return list.sort((a, b) => a.rowIndex - b.rowIndex);
+}
+
 module.exports = {
   loadOverrides,
   saveOverride,
   deleteOverride,
   getBookingKey,
-  applyOverridesToRows
+  attachRowMeta,
+  applyOverridesToRows,
+  buildCustomBookingEntry,
+  createCustomBooking,
+  getCustomBookingsAsRows
 };
+

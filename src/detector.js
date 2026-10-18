@@ -224,6 +224,18 @@ function buildCurrentMonthMap(rows, referenceDate = new Date()) {
     }
 
     const code = codeCol !== -1 ? (row[codeCol] || '').toString().trim().toUpperCase() : '';
+    const isHeaderRow = code === 'CODE' || row.slice(0, -1).some(cell => {
+      if (!cell) return false;
+      const upper = cell.toString().trim().toUpperCase();
+      return upper === 'STAYING DAYS' || upper === 'ROOM TYPE' || upper === 'CHECK IN' || upper === 'CHECK OUT';
+    });
+    if (isHeaderRow) {
+      lastCode = '';
+      lastCheckIn = null;
+      lastCheckOut = null;
+      continue;
+    }
+
     let checkIn  = parseDate(row[checkInCol]);
     let checkOut = parseDate(row[checkOutCol]);
 
@@ -236,15 +248,18 @@ function buildCurrentMonthMap(rows, referenceDate = new Date()) {
         lastCheckIn = checkIn;
         lastCheckOut = checkOut;
       }
-    } else {
-      lastCode = '';
-      lastCheckIn = null;
-      lastCheckOut = null;
+    } else if (lastCode) {
+      if (!checkIn && lastCheckIn) checkIn = lastCheckIn;
+      if (!checkOut && lastCheckOut) checkOut = lastCheckOut;
     }
 
     if (isBookingInCurrentMonth(checkIn, checkOut, referenceDate)) {
-      const key = rowKey(row, i);
-      map[key] = { row, checkIn, checkOut, rowIndex: i };
+      const effectiveRowIndex = row._customRowIndex !== undefined ? row._customRowIndex : i;
+      const key = rowKey(row, effectiveRowIndex);
+      const entry = { row, checkIn, checkOut, rowIndex: effectiveRowIndex };
+      if (row._inheritedMeta) entry.inheritedMeta = row._inheritedMeta;
+      if (row._isCustomBooking) entry.isCustomBooking = true;
+      map[key] = entry;
     }
   }
 

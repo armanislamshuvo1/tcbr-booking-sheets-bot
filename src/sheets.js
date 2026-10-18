@@ -505,12 +505,29 @@ async function enrichSheetRows(rows) {
   const checkOutIndex = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
   const codeIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
   const picIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'PIC');
+  const nameIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
+  const foundStayingDaysIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'STAYING DAYS');
+  const stayingDaysIndex = foundStayingDaysIdx !== -1 ? foundStayingDaysIdx : 9;
 
-  // Forward-fill missing Check-In / Check-Out dates & PIC for rows sharing the same booking code
+  const { attachRowMeta } = require('./overrides');
+
+  function isSectionHeaderRow(row, code) {
+    if (code === 'CODE') return true;
+    return row.slice(0, -1).some(cell => {
+      if (!cell) return false;
+      const upper = cell.toString().trim().toUpperCase();
+      return upper === 'STAYING DAYS' || upper === 'ROOM TYPE' || upper === 'CHECK IN' || upper === 'CHECK OUT';
+    });
+  }
+
+  // Forward-fill missing CODE, Check-In / Check-Out dates, PIC, Name & Staying Days for multi-row bookings
   let forwardCode = '';
   let forwardCheckIn = '';
   let forwardCheckOut = '';
   let forwardPic = '';
+  let forwardName = '';
+  let forwardStayingDays = '';
+  let forwardRowIndex = -1;
 
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -519,19 +536,37 @@ async function enrichSheetRows(rows) {
       forwardCheckIn = '';
       forwardCheckOut = '';
       forwardPic = '';
+      forwardName = '';
+      forwardStayingDays = '';
+      forwardRowIndex = -1;
       continue;
     }
 
-    const code = codeIndex !== -1 ? (row[codeIndex] || '').toString().trim().toUpperCase() : '';
+    let code = codeIndex !== -1 ? (row[codeIndex] || '').toString().trim().toUpperCase() : '';
+    if (isSectionHeaderRow(row, code)) {
+      forwardCode = '';
+      forwardCheckIn = '';
+      forwardCheckOut = '';
+      forwardPic = '';
+      forwardName = '';
+      forwardStayingDays = '';
+      forwardRowIndex = -1;
+      continue;
+    }
+
     const checkInVal = checkInIndex !== -1 ? (row[checkInIndex] || '').toString().trim() : '';
     const checkOutVal = checkOutIndex !== -1 ? (row[checkOutIndex] || '').toString().trim() : '';
     const picVal = picIndex !== -1 ? (row[picIndex] || '').toString().trim() : '';
+    const nameVal = nameIndex !== -1 ? (row[nameIndex] || '').toString().trim() : '';
+    const stayingDaysVal = stayingDaysIndex !== -1 ? (row[stayingDaysIndex] || '').toString().trim() : '';
 
     if (code) {
       if (code === forwardCode) {
+        const inheritedFields = [];
         if (!checkInVal && forwardCheckIn && checkInIndex !== -1) {
           while (row.length <= checkInIndex) row.push('');
           row[checkInIndex] = forwardCheckIn;
+          inheritedFields.push('CHECK IN');
         } else if (checkInVal) {
           forwardCheckIn = checkInVal;
         }
@@ -539,6 +574,7 @@ async function enrichSheetRows(rows) {
         if (!checkOutVal && forwardCheckOut && checkOutIndex !== -1) {
           while (row.length <= checkOutIndex) row.push('');
           row[checkOutIndex] = forwardCheckOut;
+          inheritedFields.push('CHECK OUT');
         } else if (checkOutVal) {
           forwardCheckOut = checkOutVal;
         }
@@ -546,20 +582,100 @@ async function enrichSheetRows(rows) {
         if (!picVal && forwardPic && picIndex !== -1) {
           while (row.length <= picIndex) row.push('');
           row[picIndex] = forwardPic;
+          inheritedFields.push('PIC');
         } else if (picVal) {
           forwardPic = picVal;
+        }
+
+        if (!nameVal && forwardName && nameIndex !== -1) {
+          while (row.length <= nameIndex) row.push('');
+          row[nameIndex] = forwardName;
+          inheritedFields.push('NAME');
+        } else if (nameVal) {
+          forwardName = nameVal;
+        }
+
+        if (!stayingDaysVal && forwardStayingDays && stayingDaysIndex !== -1 && (inheritedFields.includes('CHECK IN') || inheritedFields.includes('CHECK OUT'))) {
+          while (row.length <= stayingDaysIndex) row.push('');
+          row[stayingDaysIndex] = forwardStayingDays;
+          inheritedFields.push('STAYING DAYS');
+        } else if (stayingDaysVal) {
+          forwardStayingDays = stayingDaysVal;
+        }
+
+        if (inheritedFields.length > 0) {
+          attachRowMeta(row, {
+            inheritedMeta: {
+              fromRow: forwardRowIndex + 1,
+              fromCode: forwardCode,
+              fields: inheritedFields
+            }
+          });
         }
       } else {
         forwardCode = code;
         forwardCheckIn = checkInVal;
         forwardCheckOut = checkOutVal;
         forwardPic = picVal;
+        forwardName = nameVal;
+        forwardStayingDays = stayingDaysVal;
+        forwardRowIndex = i;
       }
-    } else {
-      forwardCode = '';
-      forwardCheckIn = '';
-      forwardCheckOut = '';
-      forwardPic = '';
+    } else if (forwardCode) {
+      const inheritedFields = [];
+      if (codeIndex !== -1) {
+        while (row.length <= codeIndex) row.push('');
+        row[codeIndex] = forwardCode;
+        code = forwardCode;
+        inheritedFields.push('CODE');
+      }
+      if (!picVal && forwardPic && picIndex !== -1) {
+        while (row.length <= picIndex) row.push('');
+        row[picIndex] = forwardPic;
+        inheritedFields.push('PIC');
+      }
+      if (!nameVal && forwardName && nameIndex !== -1) {
+        while (row.length <= nameIndex) row.push('');
+        row[nameIndex] = forwardName;
+        inheritedFields.push('NAME');
+      }
+      if (!checkInVal && forwardCheckIn && checkInIndex !== -1) {
+        while (row.length <= checkInIndex) row.push('');
+        row[checkInIndex] = forwardCheckIn;
+        inheritedFields.push('CHECK IN');
+      }
+      if (!checkOutVal && forwardCheckOut && checkOutIndex !== -1) {
+        while (row.length <= checkOutIndex) row.push('');
+        row[checkOutIndex] = forwardCheckOut;
+        inheritedFields.push('CHECK OUT');
+      }
+      if (!stayingDaysVal && forwardStayingDays && stayingDaysIndex !== -1 && !checkInVal && !checkOutVal) {
+        while (row.length <= stayingDaysIndex) row.push('');
+        row[stayingDaysIndex] = forwardStayingDays;
+        inheritedFields.push('STAYING DAYS');
+      }
+
+      if (inheritedFields.length > 0) {
+        attachRowMeta(row, {
+          inheritedMeta: {
+            fromRow: forwardRowIndex + 1,
+            fromCode: forwardCode,
+            fields: inheritedFields
+          }
+        });
+      }
+    } else if (!code && nameIndex !== -1 && nameVal) {
+      // Fallback: try to inherit code from another booking row for the same customer name
+      const matchRow = rows.find(r => {
+        if (!r) return false;
+        const rName = nameIndex !== -1 ? (r[nameIndex] || '').toString().trim() : '';
+        const rCode = codeIndex !== -1 ? (r[codeIndex] || '').toString().trim().toUpperCase() : '';
+        return rName.toLowerCase() === nameVal.toLowerCase() && rCode;
+      });
+      if (matchRow) {
+        code = matchRow[codeIndex].toString().trim().toUpperCase();
+        if (codeIndex !== -1) row[codeIndex] = code;
+      }
     }
   }
 
@@ -601,22 +717,20 @@ async function enrichSheetRows(rows) {
   // 2. Fetch room allocations map for these months
   const monthNamesList = Array.from(monthsToFetch);
   const roomMap = await fetchRoomMap(monthNamesList);
+  Object.defineProperty(rows, '_roomMap', {
+    value: roomMap,
+    enumerable: false,
+    writable: true,
+    configurable: true
+  });
 
   // 3. Enrich rows with ROOM and ROOM_PAX columns
   if (headers && headers.length > 0) {
     headers[headers.length - 1] = 'ROW_COLOR';
   }
-
-  const nameIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'NAME');
-  const colorIndex = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROW_COLOR');
   
   headers.push('ROOM');
   headers.push('ROOM_PAX');
-
-  let lastBlockCode = '';
-  let lastBlockPic = '';
-  let lastBlockName = '';
-  let lastBlockColor = '';
 
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -625,41 +739,8 @@ async function enrichSheetRows(rows) {
     }
 
     let code = codeIndex !== -1 ? (row[codeIndex] || '').toString().trim().toUpperCase() : '';
-    let nameVal = nameIndex !== -1 ? (row[nameIndex] || '').toString().trim() : '';
-    let picVal = picIndex !== -1 ? (row[picIndex] || '').toString().trim() : '';
-    let colorVal = colorIndex !== -1 ? (row[colorIndex] || '').toString().trim() : '';
-
-    if (code || nameVal) {
-      lastBlockCode = code;
-      lastBlockPic = picVal;
-      lastBlockName = nameVal;
-      lastBlockColor = colorVal;
-    } else if (!code && !nameVal && lastBlockCode) {
-      if (codeIndex !== -1 && lastBlockCode) {
-        row[codeIndex] = lastBlockCode;
-        code = lastBlockCode;
-      }
-      if (picIndex !== -1 && lastBlockPic) {
-        row[picIndex] = lastBlockPic;
-      }
-      if (nameIndex !== -1 && lastBlockName) {
-        row[nameIndex] = lastBlockName;
-        nameVal = lastBlockName;
-      }
-    }
-
-    // If code is empty, try to inherit it from another booking row for the same customer name
-    if (!code && nameIndex !== -1 && nameVal) {
-      const matchRow = rows.find(r => {
-        if (!r) return false;
-        const rName = nameIndex !== -1 ? (r[nameIndex] || '').toString().trim() : '';
-        const rCode = codeIndex !== -1 ? (r[codeIndex] || '').toString().trim().toUpperCase() : '';
-        return rName.toLowerCase() === nameVal.toLowerCase() && rCode;
-      });
-      if (matchRow) {
-        code = matchRow[codeIndex].toString().trim().toUpperCase();
-        if (codeIndex !== -1) row[codeIndex] = code;
-      }
+    if (isSectionHeaderRow(row, code)) {
+      continue;
     }
 
     let roomsStr = '—';
@@ -686,16 +767,25 @@ async function enrichSheetRows(rows) {
 
 /**
  * Fetches all rows from the Google Sheet, enriches them with Room details,
- * and applies active dashboard admin overrides.
+ * and applies active dashboard admin overrides and custom bookings.
  */
 async function fetchAndEnrichSheetData() {
   const rows = await fetchSheetData();
   await enrichSheetRows(rows);
 
   try {
-    const { applyOverridesToRows } = require('./overrides');
+    const { applyOverridesToRows, loadOverrides, getCustomBookingsAsRows } = require('./overrides');
     const headerIndex = findHeaderRowIndex(rows);
     const headers = rows[headerIndex] || [];
+    const roomMap = rows._roomMap || {};
+
+    const codeIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+    const checkInIdx = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+    const checkOutIdx = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+    const roomIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
+    const roomPaxIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
+
+    const overridesMap = await loadOverrides();
 
     const dataRows = rows.slice(headerIndex + 1).map((row, idx) => ({
       row,
@@ -704,7 +794,44 @@ async function fetchAndEnrichSheetData() {
     const overriddenDataRows = await applyOverridesToRows(dataRows, headers);
 
     for (let i = 0; i < overriddenDataRows.length; i++) {
-      rows[headerIndex + 1 + i] = overriddenDataRows[i].row;
+      const rowIndex = headerIndex + 1 + i;
+      const updatedRow = overriddenDataRows[i].row;
+      const ov = overridesMap ? overridesMap[`ROW_${rowIndex}`] : null;
+
+      // Recompute ROOM and ROOM_PAX if admin amended CODE, CHECK IN, or CHECK OUT without overriding ROOM directly
+      if (ov && ov.fields && !ov.fields['ROOM'] && (ov.fields['CODE'] || ov.fields['CHECK IN'] || ov.fields['CHECK OUT'])) {
+        const cVal = codeIdx !== -1 ? (updatedRow[codeIdx] || '').toString().trim().toUpperCase() : '';
+        const ciVal = checkInIdx !== -1 ? (updatedRow[checkInIdx] || '').toString().trim() : '';
+        const coVal = checkOutIdx !== -1 ? (updatedRow[checkOutIdx] || '').toString().trim() : '';
+        if (cVal && roomIdx !== -1) {
+          const res = formatRoomDetailsWithDates(cVal, ciVal, coVal, roomMap);
+          if (res.roomsStr && res.roomsStr !== '—') {
+            updatedRow[roomIdx] = res.roomsStr;
+            if (roomPaxIdx !== -1) updatedRow[roomPaxIdx] = res.totalPaxVal;
+          }
+        }
+      }
+
+      rows[rowIndex] = updatedRow;
+    }
+
+    // Append custom dashboard-created bookings
+    const customBookings = await getCustomBookingsAsRows(headers);
+    for (const customEntry of customBookings) {
+      const cRow = customEntry.row;
+      const cVal = codeIdx !== -1 ? (cRow[codeIdx] || '').toString().trim().toUpperCase() : '';
+      const ciVal = checkInIdx !== -1 ? (cRow[checkInIdx] || '').toString().trim() : '';
+      const coVal = checkOutIdx !== -1 ? (cRow[checkOutIdx] || '').toString().trim() : '';
+      const rVal = roomIdx !== -1 ? (cRow[roomIdx] || '').toString().trim() : '';
+
+      if (cVal && (!rVal || rVal === '—') && roomIdx !== -1) {
+        const res = formatRoomDetailsWithDates(cVal, ciVal, coVal, roomMap);
+        if (res.roomsStr && res.roomsStr !== '—') {
+          cRow[roomIdx] = res.roomsStr;
+          if (roomPaxIdx !== -1) cRow[roomPaxIdx] = res.totalPaxVal;
+        }
+      }
+      rows.push(cRow);
     }
   } catch (err) {
     console.warn('   ⚠️ Failed to apply admin overrides in fetchAndEnrichSheetData:', err.message);

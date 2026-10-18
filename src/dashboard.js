@@ -1,7 +1,7 @@
 const express = require('express');
 const path    = require('path');
 const { loadHistory, loadSnapshot, getDbStatus, acknowledgeEvent, getTotalChecksCount } = require('./snapshot');
-const { parseDate, isCancelledText, isPostponedText } = require('./detector');
+const { parseDate, isBookingInCurrentMonth, isCancelledText, isPostponedText } = require('./detector');
 const { parsePax, parseDivingPax, parseCoursePax } = require('./weeklyReport');
 const { 
   initSeedAdmin, 
@@ -17,7 +17,7 @@ const {
   registerRateLimiter
 } = require('./auth');
 const admin = require('./adminController');
-const { applyOverridesToRows } = require('./overrides');
+const { applyOverridesToRows, getCustomBookingsAsRows } = require('./overrides');
 
 const app = express();
 
@@ -210,20 +210,40 @@ app.get('/api/current-bookings', requireAuth, async (req, res) => {
       return res.json({ headers: [], bookings: [] });
     }
 
+    const headers = snapshot.headers || [];
     const rawBookings = Object.values(snapshot.monthMap || {}).map(entry => ({
       row: entry.row,
       rowIndex: entry.rowIndex,
+      ...(entry.inheritedMeta ? { inheritedMeta: entry.inheritedMeta } : {}),
+      ...(entry.isCustomBooking ? { isCustomBooking: true } : {})
     }));
-    const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
+
+    // Ensure any custom bookings in current month are included even before next snapshot sync
+    const existingRowIndices = new Set(rawBookings.map(b => b.rowIndex));
+    const customBookings = await getCustomBookingsAsRows(headers);
+    const checkInCol = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+    const checkOutCol = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+
+    for (const cb of customBookings) {
+      if (!existingRowIndices.has(cb.rowIndex)) {
+        const ci = parseDate(cb.row[checkInCol !== -1 ? checkInCol : 7]);
+        const co = parseDate(cb.row[checkOutCol !== -1 ? checkOutCol : 8]);
+        if (isBookingInCurrentMonth(ci, co)) {
+          rawBookings.push(cb);
+        }
+      }
+    }
+
+    const bookings = await applyOverridesToRows(rawBookings, headers);
 
     const userRole = req.user?.role || 'operator';
     if (userRole !== 'admin') {
-      const sanitized = sanitizeBookingsForRole(snapshot.headers || [], bookings, userRole);
+      const sanitized = sanitizeBookingsForRole(headers, bookings, userRole);
       return res.json(sanitized);
     }
 
     res.json({
-      headers: snapshot.headers || [],
+      headers,
       bookings,
     });
   } catch (err) {
@@ -240,17 +260,26 @@ app.get('/api/all-bookings', requireAuth, requireRole('admin', 'operator', 'jett
       return res.json({ headers: [], bookings: [] });
     }
 
-    const rawBookings = snapshot.allRows || [];
-    const bookings = await applyOverridesToRows(rawBookings, snapshot.headers || []);
+    const headers = snapshot.headers || [];
+    const rawBookings = [...(snapshot.allRows || [])];
+    const existingRowIndices = new Set(rawBookings.map(b => b.rowIndex));
+    const customBookings = await getCustomBookingsAsRows(headers);
+    for (const cb of customBookings) {
+      if (!existingRowIndices.has(cb.rowIndex)) {
+        rawBookings.push(cb);
+      }
+    }
+
+    const bookings = await applyOverridesToRows(rawBookings, headers);
 
     const userRole = req.user?.role || 'operator';
     if (userRole !== 'admin') {
-      const sanitized = sanitizeBookingsForRole(snapshot.headers || [], bookings, userRole);
+      const sanitized = sanitizeBookingsForRole(headers, bookings, userRole);
       return res.json(sanitized);
     }
 
     res.json({
-      headers: snapshot.headers || [],
+      headers,
       bookings,
     });
   } catch (err) {
@@ -329,12 +358,18 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
     const specialReqIdx = headers.findIndex(h => h && ['SPECIAL REQUEST', 'SPECIAL_REQUEST', 'SPECIAL REQUESTS', 'REQUEST'].includes(h.toString().trim().toUpperCase()));
     const codeIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
 
-    const roomIdx = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
-
     const bookingsByCode = {};
 
-    const rawAllRows = snapshot.allRows || [];
-    const allRows = await applyOverridesToRows(rawAllRows, snapshot.headers || []);
+    const rawAllRows = [...(snapshot.allRows || [])];
+    const existingRowIndices = new Set(rawAllRows.map(b => b.rowIndex));
+    const customBookings = await getCustomBookingsAsRows(headers);
+    for (const cb of customBookings) {
+      if (!existingRowIndices.has(cb.rowIndex)) {
+        rawAllRows.push(cb);
+      }
+    }
+
+    const allRows = await applyOverridesToRows(rawAllRows, headers);
 
     let lastInHouseCode = '';
     let lastInHouseCheckIn = null;
@@ -346,11 +381,12 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       
       const remarkVal = (remarkIdx !== -1 ? (row[remarkIdx] || '') : (row[22] || '')).toString().toLowerCase();
       const specialReqVal = (specialReqIdx !== -1 ? (row[specialReqIdx] || '') : (row[13] || '')).toString().toLowerCase();
+      const combinedVal = `${remarkVal} ${specialReqVal}`;
       if (isCancelledText(combinedVal) || isPostponedText(combinedVal)) {
         continue;
       }
 
-      const rawCode = (codeIdx !== -1 && row[codeIdx]) ? row[codeIdx].toString().trim().toUpperCase() : '';
+      let rawCode = (codeIdx !== -1 && row[codeIdx]) ? row[codeIdx].toString().trim().toUpperCase() : '';
       const checkInStr = row[7];
       const checkOutStr = row[8];
       let checkIn = parseDate(checkInStr);
@@ -365,10 +401,10 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
           lastInHouseCheckIn = checkIn;
           lastInHouseCheckOut = checkOut;
         }
-      } else {
-        lastInHouseCode = '';
-        lastInHouseCheckIn = null;
-        lastInHouseCheckOut = null;
+      } else if (lastInHouseCode) {
+        rawCode = lastInHouseCode;
+        if (!checkIn && lastInHouseCheckIn) checkIn = lastInHouseCheckIn;
+        if (!checkOut && lastInHouseCheckOut) checkOut = lastInHouseCheckOut;
       }
 
       if (!checkIn) continue;
@@ -387,7 +423,6 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       }
 
       if (isInHouse) {
-        const rawCode = (codeIdx !== -1 && row[codeIdx]) ? row[codeIdx].toString().trim().toUpperCase() : '';
         const rIndex = item.rowIndex !== undefined ? item.rowIndex : i;
         const codeKey = rawCode ? `${rawCode}_${rIndex}` : `ROW_${rIndex}`;
 
@@ -399,7 +434,9 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
             totalActivityPax: 0,
             roomPax: 0,
             isOverridden: !!item.isOverridden,
-            overrideMeta: item.overrideMeta
+            overrideMeta: item.overrideMeta,
+            inheritedMeta: item.inheritedMeta || null,
+            isCustomBooking: !!item.isCustomBooking
           };
         }
 
@@ -433,7 +470,9 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
         rowIndex: group.firstRowIndex,
         pax,
         isOverridden: group.isOverridden,
-        overrideMeta: group.overrideMeta
+        overrideMeta: group.overrideMeta,
+        ...(group.inheritedMeta ? { inheritedMeta: group.inheritedMeta } : {}),
+        ...(group.isCustomBooking ? { isCustomBooking: true } : {})
       });
     }
 
@@ -530,7 +569,8 @@ app.post('/api/admin/snapshot/reset', requireAuth, requireAdmin, admin.resetSnap
 app.get('/api/admin/export/:type', requireAuth, requireAdmin, admin.exportData);
 app.get('/api/admin/audit-logs', requireAuth, requireAdmin, admin.getAuditLogsHandler);
 
-// Dashboard Booking Overrides APIs (Accessible to Admin & Operator)
+// Dashboard Booking Overrides & Custom Booking APIs (Accessible to Admin & Operator)
+app.post('/api/admin/bookings/create', requireAuth, requireRole('admin', 'operator'), admin.createDashboardBooking);
 app.put('/api/admin/bookings/override', requireAuth, requireRole('admin', 'operator'), admin.updateBookingOverride);
 app.delete('/api/admin/bookings/override', requireAuth, requireAdmin, admin.revertBookingOverride);
 

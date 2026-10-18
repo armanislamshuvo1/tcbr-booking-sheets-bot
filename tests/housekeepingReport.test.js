@@ -417,6 +417,97 @@ runTest('getHousekeeping10DayWindow: Computes 10-day KL window accurately across
       assert.strictEqual(fourthRun.messages.dateMessages[startStr], thirdRun.messages.dateMessages[startStr], 'Must keep prevMsgId');
       assert.strictEqual(fourthRun.messages.dateHashes[startStr], thirdRun.messages.dateHashes[startStr], 'Must keep prevHash so next run retries');
     });
+
+    // 5. Multi-room multi-row booking (e.g. X3 Zetty + Janie on Row 1391/1392) does not double-sum room pax
+    await runTest('buildHousekeepingReport: Multi-room continuation rows sharing the same CODE do not double-sum room capacities', () => {
+      const x3Rows = [
+        ['CODE', 'NAME', 'SNORKELLING', 'DIVING', 'COURSE', 'CHECK IN', 'CHECK OUT', 'ROOM', 'ROOM_PAX'],
+        ['X3', 'Zetty', '6A 1C', '', '', '18 Oct 2026', '21 Oct 2026', 'S101 (4 Pax), B104 (3 Pax), B105 (4 Pax)', '11'],
+        ['X3', 'Janie', '2A 2C', '', '', '18 Oct 2026', '21 Oct 2026', 'S101 (4 Pax), B104 (3 Pax), B105 (4 Pax)', '11'],
+      ];
+      const rep = buildHousekeepingReport(x3Rows, {
+        startDateStr: '2026-10-18',
+        endDateStr: '2026-10-18',
+      });
+      const day = rep.days[0];
+      assert.strictEqual(day.checkIns.length, 3);
+      const b104 = day.checkIns.find(r => r.room === 'B104');
+      const b105 = day.checkIns.find(r => r.room === 'B105');
+      const s101 = day.checkIns.find(r => r.room === 'S101');
+      assert.strictEqual(b104.pax, 3);
+      assert.strictEqual(b105.pax, 4);
+      assert.strictEqual(s101.pax, 4);
+    });
+
+    // 6. buildCurrentMonthMap & overrides: Row 1392 continuation row inheritance, amendment, and custom booking creation
+    await runTest('buildCurrentMonthMap & overrides: Uncoded continuation row inherits dates, supports override amendment, and custom bookings work', async () => {
+      const { buildCurrentMonthMap } = require('../src/detector');
+      const { attachRowMeta, applyOverridesToRows, buildCustomBookingEntry } = require('../src/overrides');
+
+      const sheetHeaders = [
+        'NO', 'CODE', 'PIC', 'NAME', 'SNORKELLING', 'DIVING', 'COURSE',
+        'CHECK IN', 'CHECK OUT', 'STAYING DAYS', 'ROOM TYPE', 'SHARING', 'BED',
+        'SPECIAL REQUEST', '', '', '', '', 'TOTAL AMOUNT', 'DEPOSIT', 'BALANCE', 'STATUS', 'REMARK', '', '', 'ROW_COLOR', 'ROOM', 'ROOM_PAX'
+      ];
+      const row1391 = ['', 'X3', 'Jen', 'Zetty', '6A 1C', '', '', '18th Oct', '21st Oct', '4D3N', '2 Beach front deluxe', 'Triple,quD', '', '', '', '', '', '', '', '', '', '', '', '', '', 'rgb(255,0,0)', 'S101 (4 Pax), B104 (3 Pax), B105 (4 Pax)', 11];
+      const row1392 = ['', 'X3', 'Jen', 'Janie', '2A 2C', '', '', '18th Oct', '21st Oct', '4D3N', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'rgb(255,0,0)', 'S101 (4 Pax), B104 (3 Pax), B105 (4 Pax)', 11];
+      attachRowMeta(row1392, {
+        inheritedMeta: {
+          fromRow: 1391,
+          fromCode: 'X3',
+          fields: ['CODE', 'PIC', 'CHECK IN', 'CHECK OUT', 'STAYING DAYS']
+        }
+      });
+
+      const refOct = new Date(2026, 9, 18);
+      const monthMap = buildCurrentMonthMap([sheetHeaders, row1391, row1392], refOct);
+      assert.ok(monthMap['row1'], 'Parent row should be in monthMap');
+      assert.ok(monthMap['row2'], 'Continuation row (Janie) should be in monthMap');
+      assert.deepStrictEqual(monthMap['row2'].inheritedMeta.fields, ['CODE', 'PIC', 'CHECK IN', 'CHECK OUT', 'STAYING DAYS']);
+
+      // Amend inherited row via applyOverridesToRows
+      const singleOverride = {
+        ROW_2: {
+          bookingKey: 'ROW_2',
+          fields: { CODE: 'X4', PIC: 'Alex', SHARING: 'Quad', BED: '2 Queen' },
+          updatedBy: 'admin',
+          updatedAt: '2026-10-18T00:00:00.000Z'
+        }
+      };
+      const [amended] = await applyOverridesToRows([monthMap['row2']], sheetHeaders, singleOverride);
+      assert.strictEqual(amended.row[1], 'X4');
+      assert.strictEqual(amended.row[2], 'Alex');
+      assert.strictEqual(amended.row[11], 'Quad');
+      assert.strictEqual(amended.row[12], '2 Queen');
+      assert.strictEqual(amended.isOverridden, true);
+      assert.strictEqual(amended.inheritedMeta.fromCode, 'X3');
+
+      // Custom booking creation
+      const customEntry = buildCustomBookingEntry(100001, {
+        bookingKey: 'ROW_100001',
+        isCustomBooking: true,
+        fields: {
+          CODE: 'Z9',
+          PIC: 'Jen',
+          NAME: 'Custom Guest',
+          'CHECK IN': '19th Oct',
+          'CHECK OUT': '22nd Oct',
+          'STAYING DAYS': '4D3N',
+          SNORKELLING: '2A',
+          SHARING: 'Double',
+          BED: '1 King',
+          ROOM: 'V101 (2 Pax)',
+          ROOM_PAX: '2'
+        },
+        updatedBy: 'admin'
+      }, sheetHeaders);
+      assert.strictEqual(customEntry.isCustomBooking, true);
+      assert.strictEqual(customEntry.rowIndex, 100001);
+      assert.strictEqual(customEntry.row[1], 'Z9');
+      assert.strictEqual(customEntry.row[3], 'Custom Guest');
+      assert.strictEqual(customEntry.row[11], 'Double');
+      assert.strictEqual(customEntry.row[12], '1 King');
+    });
   } finally {
     telegram.sendMessage = origSend;
     telegram.editMessageText = origEdit;

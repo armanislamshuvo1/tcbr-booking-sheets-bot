@@ -428,8 +428,21 @@ function buildReport(rows) {
     }
 
     try {
-      const code  = codeIdx !== -1   ? (row[codeIdx]  || '').toString().trim() : '';
+      let code  = codeIdx !== -1   ? (row[codeIdx]  || '').toString().trim() : '';
       const name  = nameIdx !== -1   ? (row[nameIdx]  || '').toString().trim() : '';
+
+      const upperCode = code ? code.toUpperCase() : '';
+      const isHeaderRow = upperCode === 'CODE' || row.slice(0, -1).some(cell => {
+        if (!cell) return false;
+        const u = cell.toString().trim().toUpperCase();
+        return u === 'STAYING DAYS' || u === 'ROOM TYPE' || u === 'CHECK IN' || u === 'CHECK OUT';
+      });
+      if (isHeaderRow) {
+        lastReportCode = '';
+        lastReportCheckIn = null;
+        lastReportCheckOut = null;
+        continue;
+      }
 
       const checkInRaw  = checkInIdx  !== -1 ? (row[checkInIdx]  || '').toString().trim() : '';
       const checkOutRaw = checkOutIdx !== -1 ? (row[checkOutIdx] || '').toString().trim() : '';
@@ -437,7 +450,6 @@ function buildReport(rows) {
       let checkInDate  = parseDate(checkInRaw);
       let checkOutDate = parseDate(checkOutRaw);
 
-      const upperCode = code ? code.toUpperCase() : '';
       if (upperCode) {
         if (upperCode === lastReportCode) {
           if (!checkInDate && lastReportCheckIn) checkInDate = lastReportCheckIn;
@@ -447,10 +459,10 @@ function buildReport(rows) {
           lastReportCheckIn = checkInDate;
           lastReportCheckOut = checkOutDate;
         }
-      } else {
-        lastReportCode = '';
-        lastReportCheckIn = null;
-        lastReportCheckOut = null;
+      } else if (lastReportCode) {
+        code = lastReportCode;
+        if (!checkInDate && lastReportCheckIn) checkInDate = lastReportCheckIn;
+        if (!checkOutDate && lastReportCheckOut) checkOutDate = lastReportCheckOut;
       }
 
       // Skip rows with no code AND no name AND no valid dates (likely empty or metadata rows)

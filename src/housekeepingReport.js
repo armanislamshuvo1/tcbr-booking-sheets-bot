@@ -207,16 +207,27 @@ function aggregateRoomList(list) {
         isRoomMove: false,
         codes: [],
         names: [],
+        _seenMultiRoomCodes: new Set(),
       });
     }
     const agg = map.get(roomKey);
-    agg.pax += (item.pax || 0);
+    if (item.multiRoomCode) {
+      if (!agg._seenMultiRoomCodes.has(item.multiRoomCode)) {
+        agg._seenMultiRoomCodes.add(item.multiRoomCode);
+        agg.pax += (item.pax || 0);
+      }
+    } else {
+      agg.pax += (item.pax || 0);
+    }
     if (item.b2b) agg.b2b = true;
     if (item.isRoomMove) agg.isRoomMove = true;
-    if (item.code) agg.codes.push(item.code);
-    if (item.name) agg.names.push(item.name);
+    if (item.code && !agg.codes.includes(item.code)) agg.codes.push(item.code);
+    if (item.name && !agg.names.includes(item.name)) agg.names.push(item.name);
   }
-  return Array.from(map.values());
+  return Array.from(map.values()).map(entry => {
+    const { _seenMultiRoomCodes, ...clean } = entry;
+    return clean;
+  });
 }
 
 /**
@@ -395,6 +406,8 @@ function buildHousekeepingReport(rows, options = {}) {
       }
 
       // Standard non-transition bookings:
+      const multiRoomCode = (roomAllocations.length > 1 && code) ? code.toUpperCase() : null;
+
       // Process Check-Out:
       if (checkOutDate && (filterType === 'both' || filterType === 'checkout')) {
         const outKey = toKLDateString(checkOutDate);
@@ -407,6 +420,7 @@ function buildHousekeepingReport(rows, options = {}) {
               isShared: alloc.isShared,
               code,
               name,
+              ...(multiRoomCode ? { multiRoomCode } : {}),
             });
           }
         }
@@ -424,6 +438,7 @@ function buildHousekeepingReport(rows, options = {}) {
               isShared: alloc.isShared,
               code,
               name,
+              ...(multiRoomCode ? { multiRoomCode } : {}),
             });
           }
         }

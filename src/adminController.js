@@ -12,6 +12,7 @@ const {
   loadSnapshot,
   loadHistory,
   saveSnapshot,
+  persistRawSnapshot,
   updateSnapshotReportState,
   appendErrorLog,
   addNote,
@@ -628,30 +629,79 @@ async function updateBookingOverride(req, res) {
       if (snapshot && parsedRowIndex !== undefined) {
         const headers = snapshot.headers || [];
         const singleOverrideMap = { [finalKey]: payload };
+        const { parseDate, isBookingInCurrentMonth, rowKey } = require('./detector');
+
+        const checkInCol = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+        const checkOutCol = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+        const codeCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+        const roomCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
+        const roomPaxCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
+
+        let updatedRowRef = null;
+        let updatedEntryMeta = {};
 
         if (Array.isArray(snapshot.allRows)) {
           const idx = snapshot.allRows.findIndex(r => r && r.rowIndex === parsedRowIndex);
           if (idx !== -1) {
             const [updatedEntry] = await applyOverridesToRows([snapshot.allRows[idx]], headers, singleOverrideMap);
-            snapshot.allRows[idx] = { row: updatedEntry.row, rowIndex: parsedRowIndex };
+            // If CODE was amended and ROOM was not explicitly overridden, copy room from any matching row in snapshot.allRows
+            if (sanitizedFields['CODE'] && !sanitizedFields['ROOM'] && codeCol !== -1 && roomCol !== -1) {
+              const newCode = (updatedEntry.row[codeCol] || '').toString().trim().toUpperCase();
+              const peer = snapshot.allRows.find(r => r && r.rowIndex !== parsedRowIndex && Array.isArray(r.row) && (r.row[codeCol] || '').toString().trim().toUpperCase() === newCode && r.row[roomCol] && r.row[roomCol] !== '—');
+              if (peer) {
+                updatedEntry.row[roomCol] = peer.row[roomCol];
+                if (roomPaxCol !== -1 && peer.row[roomPaxCol] !== undefined) {
+                  updatedEntry.row[roomPaxCol] = peer.row[roomPaxCol];
+                }
+              }
+            }
+            const nextAllRow = { row: updatedEntry.row, rowIndex: parsedRowIndex };
+            if (updatedEntry.inheritedMeta) nextAllRow.inheritedMeta = updatedEntry.inheritedMeta;
+            if (updatedEntry.isCustomBooking || payload.isCustomBooking) nextAllRow.isCustomBooking = true;
+            snapshot.allRows[idx] = nextAllRow;
+            updatedRowRef = updatedEntry.row;
+            updatedEntryMeta = nextAllRow;
           }
         }
+
         if (snapshot.monthMap && typeof snapshot.monthMap === 'object') {
+          let existingMonthKey = null;
           for (const [mKey, mEntry] of Object.entries(snapshot.monthMap)) {
             if (mEntry && mEntry.rowIndex === parsedRowIndex) {
+              existingMonthKey = mKey;
               const [updatedEntry] = await applyOverridesToRows([mEntry], headers, singleOverrideMap);
-              snapshot.monthMap[mKey] = { ...mEntry, row: updatedEntry.row };
+              if (updatedRowRef) {
+                updatedEntry.row = updatedRowRef;
+              }
+              snapshot.monthMap[mKey] = {
+                ...mEntry,
+                row: updatedEntry.row,
+                ...(updatedEntryMeta.inheritedMeta ? { inheritedMeta: updatedEntryMeta.inheritedMeta } : {}),
+                ...(updatedEntryMeta.isCustomBooking ? { isCustomBooking: true } : {})
+              };
+            }
+          }
+
+          const rowToEvaluate = updatedRowRef || (existingMonthKey ? snapshot.monthMap[existingMonthKey].row : null);
+          if (rowToEvaluate) {
+            const ciDate = checkInCol !== -1 ? parseDate(rowToEvaluate[checkInCol]) : null;
+            const coDate = checkOutCol !== -1 ? parseDate(rowToEvaluate[checkOutCol]) : null;
+            const inCurrentMonth = isBookingInCurrentMonth(ciDate, coDate);
+            if (inCurrentMonth && !existingMonthKey) {
+              const newKey = rowKey(rowToEvaluate, parsedRowIndex);
+              snapshot.monthMap[newKey] = {
+                row: rowToEvaluate,
+                rowIndex: parsedRowIndex,
+                ...(updatedEntryMeta.inheritedMeta ? { inheritedMeta: updatedEntryMeta.inheritedMeta } : {}),
+                ...(updatedEntryMeta.isCustomBooking ? { isCustomBooking: true } : {})
+              };
+            } else if (!inCurrentMonth && existingMonthKey) {
+              delete snapshot.monthMap[existingMonthKey];
             }
           }
         }
-        const { getDb } = require('./snapshot');
-        const db = await getDb();
-        if (db) {
-          await db.collection('snapshots').updateOne(
-            { type: 'current_baseline' },
-            { $set: { data: snapshot, updatedAt: new Date() } }
-          );
-        }
+
+        await persistRawSnapshot(snapshot);
       }
     } catch (syncErr) {
       console.warn('   ⚠️ Non-fatal error syncing snapshot on override update:', syncErr.message);
@@ -673,7 +723,109 @@ async function updateBookingOverride(req, res) {
 }
 
 /**
- * Delete a dashboard booking override (Revert to original Google Sheet data).
+ * Create a new custom booking directly from the dashboard (Admin / authorized roles).
+ * Expects { fields } in req.body.
+ */
+async function createDashboardBooking(req, res) {
+  try {
+    const { createCustomBooking } = require('./overrides');
+    const { parseDate, isBookingInCurrentMonth, rowKey } = require('./detector');
+    const { fields } = req.body || {};
+
+    if (!fields || typeof fields !== 'object') {
+      return res.status(400).json({ error: 'Booking fields are required.' });
+    }
+
+    const nameVal = (fields['NAME'] || '').toString().trim();
+    const codeVal = (fields['CODE'] || '').toString().trim();
+    const checkInVal = (fields['CHECK IN'] || '').toString().trim();
+    const checkOutVal = (fields['CHECK OUT'] || '').toString().trim();
+
+    if (!nameVal && !codeVal) {
+      return res.status(400).json({ error: 'Please provide at least a Customer Name or Booking Code.' });
+    }
+    if (!checkInVal || !checkOutVal) {
+      return res.status(400).json({ error: 'Check-In and Check-Out dates are required.' });
+    }
+
+    const sanitizedFields = { ...fields };
+    if (!req.user || req.user.role !== 'admin') {
+      delete sanitizedFields['TOTAL AMOUNT'];
+      delete sanitizedFields['TOTAL'];
+      delete sanitizedFields['DEPOSIT'];
+      delete sanitizedFields['BALANCE'];
+      delete sanitizedFields['STATUS'];
+    }
+
+    const snapshot = await loadSnapshot();
+    const headers = snapshot?.headers || [];
+
+    const { payload, entry } = await createCustomBooking(sanitizedFields, req.user.username, headers);
+
+    if (snapshot) {
+      const codeCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');
+      const roomCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM');
+      const roomPaxCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'ROOM_PAX');
+      const checkInCol = headers.findIndex(h => h && ['CHECK IN', 'CHECK-IN', 'CHECKIN', 'CHECK IN DATE', 'CHECK-IN DATE'].includes(h.toString().trim().toUpperCase()));
+      const checkOutCol = headers.findIndex(h => h && ['CHECK OUT', 'CHECK-OUT', 'CHECKOUT', 'CHECK OUT DATE', 'CHECK-OUT DATE'].includes(h.toString().trim().toUpperCase()));
+
+      // If ROOM was not explicitly provided, try to match from an existing row with the same CODE
+      if (!sanitizedFields['ROOM'] && codeVal && codeCol !== -1 && roomCol !== -1 && Array.isArray(snapshot.allRows)) {
+        const cleanCode = codeVal.toUpperCase();
+        const peer = snapshot.allRows.find(r => r && Array.isArray(r.row) && (r.row[codeCol] || '').toString().trim().toUpperCase() === cleanCode && r.row[roomCol] && r.row[roomCol] !== '—');
+        if (peer) {
+          entry.row[roomCol] = peer.row[roomCol];
+          if (roomPaxCol !== -1 && peer.row[roomPaxCol] !== undefined) {
+            entry.row[roomPaxCol] = peer.row[roomPaxCol];
+          }
+        }
+      }
+
+      if (!Array.isArray(snapshot.allRows)) snapshot.allRows = [];
+      snapshot.allRows.push({
+        row: entry.row,
+        rowIndex: entry.rowIndex,
+        isCustomBooking: true
+      });
+
+      const ciDate = checkInCol !== -1 ? parseDate(entry.row[checkInCol]) : parseDate(checkInVal);
+      const coDate = checkOutCol !== -1 ? parseDate(entry.row[checkOutCol]) : parseDate(checkOutVal);
+      if (isBookingInCurrentMonth(ciDate, coDate)) {
+        if (!snapshot.monthMap || typeof snapshot.monthMap !== 'object') snapshot.monthMap = {};
+        const mKey = rowKey(entry.row, entry.rowIndex);
+        snapshot.monthMap[mKey] = {
+          row: entry.row,
+          rowIndex: entry.rowIndex,
+          isCustomBooking: true
+        };
+      }
+
+      await persistRawSnapshot(snapshot);
+    }
+
+    await appendAuditLog({
+      action: 'DASHBOARD_BOOKING_CREATED',
+      username: req.user.username,
+      role: req.user.role,
+      details: `Created custom booking [${payload.bookingKey}] (${codeVal || 'No Code'} — ${nameVal || 'Unnamed'}, ${checkInVal} to ${checkOutVal})`,
+      ip: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Custom booking created successfully on dashboard.',
+      bookingKey: payload.bookingKey,
+      rowIndex: entry.rowIndex,
+      override: payload
+    });
+  } catch (err) {
+    console.error('   ❌ Error creating custom booking:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * Delete a dashboard booking override (Revert to original Google Sheet data, or delete custom booking).
  */
 async function revertBookingOverride(req, res) {
   try {
@@ -692,16 +844,43 @@ async function revertBookingOverride(req, res) {
       return res.status(404).json({ error: 'No active override found for this booking.' });
     }
 
+    // If this was a custom dashboard-created booking (rowIndex >= 100000), remove it from snapshot immediately
+    try {
+      const snapshot = await loadSnapshot();
+      if (snapshot && parsedRowIndex !== undefined && parsedRowIndex >= 100000) {
+        if (Array.isArray(snapshot.allRows)) {
+          snapshot.allRows = snapshot.allRows.filter(r => r && r.rowIndex !== parsedRowIndex);
+        }
+        if (snapshot.monthMap && typeof snapshot.monthMap === 'object') {
+          for (const [mKey, mEntry] of Object.entries(snapshot.monthMap)) {
+            if (mEntry && mEntry.rowIndex === parsedRowIndex) {
+              delete snapshot.monthMap[mKey];
+            }
+          }
+        }
+        await persistRawSnapshot(snapshot);
+      }
+    } catch (syncErr) {
+      console.warn('   ⚠️ Non-fatal error syncing snapshot on override revert:', syncErr.message);
+    }
+
     const logKey = inputKey || `ROW_${parsedRowIndex}`;
     await appendAuditLog({
-      action: 'DASHBOARD_BOOKING_OVERRIDE_REVERTED',
+      action: parsedRowIndex >= 100000 ? 'DASHBOARD_CUSTOM_BOOKING_DELETED' : 'DASHBOARD_BOOKING_OVERRIDE_REVERTED',
       username: req.user.username,
       role: req.user.role,
-      details: `Reverted dashboard override for [${logKey}] back to original sheet values.`,
+      details: parsedRowIndex >= 100000
+        ? `Deleted custom booking [${logKey}] from dashboard.`
+        : `Reverted dashboard override for [${logKey}] back to original sheet values.`,
       ip: req.ip
     });
 
-    res.json({ success: true, message: 'Booking override reverted to original sheet data.' });
+    res.json({
+      success: true,
+      message: parsedRowIndex >= 100000
+        ? 'Custom booking deleted from dashboard.'
+        : 'Booking override reverted to original sheet data.'
+    });
   } catch (err) {
     console.error('   ❌ Error reverting booking override:', err.message);
     res.status(500).json({ error: err.message });
@@ -1231,6 +1410,7 @@ module.exports = {
   fetchInternalNotes,
   getAuditLogsHandler,
   updateBookingOverride,
+  createDashboardBooking,
   revertBookingOverride,
   previewBoatTransferReport,
   sendBoatTransferReport,
