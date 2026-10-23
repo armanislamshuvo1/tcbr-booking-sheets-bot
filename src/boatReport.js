@@ -1,4 +1,4 @@
-const { findHeaderRowIndex, isCancelledText, isPostponedText } = require('./detector');
+const { findHeaderRowIndex, isCancelledText, isPostponedText, isRebookedOrHistoricalRemark } = require('./detector');
 
 /**
  * Validates raw spreadsheet rows for critical boat report columns and values.
@@ -136,7 +136,7 @@ function filterBoatReportList(rows, columnIndices, options = {}) {
     const normalizedStatus = status.toLowerCase();
 
     // Exclusion check (exclude cancelled, postponed, or changed)
-    const isExcluded = isCancelledText(normalizedStatus) || isPostponedText(normalizedStatus) || excludedStatuses.some(ex => normalizedStatus.includes(ex));
+    const isExcluded = isCancelledText(normalizedStatus) || isPostponedText(normalizedStatus) || (!isRebookedOrHistoricalRemark(normalizedStatus) && excludedStatuses.some(ex => normalizedStatus.includes(ex)));
     if (isExcluded) {
       continue;
     }

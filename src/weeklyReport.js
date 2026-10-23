@@ -420,10 +420,8 @@ function buildReport(rows) {
     const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
     const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
-    const lowerRemark = combinedVal.toLowerCase();
     const isSpecialRemark = isSpecialRemarkText(combinedVal);
-    const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
-    if (isSpecialRemark && !isHistorical) {
+    if (isSpecialRemark) {
       continue;
     }
 
@@ -878,10 +876,8 @@ function buildCustomDateReport(rows, options = {}) {
     const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
     const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
-    const lowerRemark = combinedVal.toLowerCase();
     const isSpecialRemark = isSpecialRemarkText(combinedVal);
-    const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
-    if (isSpecialRemark && !isHistorical) continue;
+    if (isSpecialRemark) continue;
 
     try {
       const code  = codeIdx !== -1 ? (row[codeIdx] || '').toString().trim() : '';

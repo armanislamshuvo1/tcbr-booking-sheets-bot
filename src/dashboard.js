@@ -1,7 +1,7 @@
 const express = require('express');
 const path    = require('path');
 const { loadHistory, loadSnapshot, getDbStatus, acknowledgeEvent, getTotalChecksCount } = require('./snapshot');
-const { parseDate, isBookingInCurrentMonth, isCancelledText, isPostponedText } = require('./detector');
+const { parseDate, isBookingInCurrentMonth, isCancelledText, isPostponedText, isSpecialRemarkText } = require('./detector');
 const { parsePax, parseDivingPax, parseCoursePax } = require('./weeklyReport');
 const { 
   initSeedAdmin, 
@@ -382,7 +382,7 @@ app.get('/api/in-house', requireAuth, requireRole('admin', 'operator'), async (r
       const remarkVal = (remarkIdx !== -1 ? (row[remarkIdx] || '') : (row[22] || '')).toString().toLowerCase();
       const specialReqVal = (specialReqIdx !== -1 ? (row[specialReqIdx] || '') : (row[13] || '')).toString().toLowerCase();
       const combinedVal = `${remarkVal} ${specialReqVal}`;
-      if (isCancelledText(combinedVal) || isPostponedText(combinedVal)) {
+      if (isSpecialRemarkText(combinedVal)) {
         continue;
       }
 

@@ -92,10 +92,8 @@ async function checkAndSend30DayReminders(rows, previousSnapshot) {
     const specialReqVal = specialReqIdx !== -1 ? (row[specialReqIdx] || '') : '';
 
     const combinedVal = `${remarkVal} ${specialReqVal}`.trim();
-    const lowerRemark = combinedVal.toLowerCase();
     const isSpecialRemark = isSpecialRemarkText(combinedVal);
-    const isHistorical = lowerRemark.includes('previously') || lowerRemark.includes('prev');
-    if (isSpecialRemark && !isHistorical) {
+    if (isSpecialRemark) {
       continue;
     }
 

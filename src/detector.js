@@ -410,10 +410,72 @@ function levenshteinDistance(a, b) {
   return matrix[b.length][a.length];
 }
 
+function isRebookedOrHistoricalRemark(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  // 1. Explicit transfer origins ("from [X]", "from [X] to [Y]")
+  // e.g. "Postpone from Sept", "Changed from Sept to Oct", "Change from Code C June", "Shifted from Aug"
+  if (/\b(postpone|postponed|pospone|pospond|change|changed|chage|chaged|move|moved|shift|shifted)\s+from\b/i.test(lower)) {
+    return true;
+  }
+  if (/\bfrom\s+[a-z0-9\s\-_/]+\s+to\s+[a-z0-9\s\-_/]+/i.test(lower)) {
+    return true;
+  }
+
+  // 2. Historical/prior indicators ("previously", "prev", "before")
+  // e.g. "Previously postponed trip", "Previously cancelled due to weather", "Postponed before", "Pospone before"
+  if (/\b(previously|prev|before)\s+(postpone|pospone|cancel|cancle|change)[a-z]*\b/i.test(lower)) {
+    return true;
+  }
+  if (/\b(postpone|pospone|cancel|cancle|change)[a-z]*\s+before\b/i.test(lower)) {
+    return true;
+  }
+
+  // 3. Past reference / transaction / credit note
+  // e.g. "PAID DURING 2025 OCT TRIP WHICH POSTPONE", "INV25030296 2025 booking postpone", "QUOTATION 000600 2025 March postpone trip"
+  if (/\b(paid|paid during|quotation|inv\d*|invoice|\b20\d\d\b.*booking).*(postpone|pospone)/i.test(lower)) {
+    return true;
+  }
+  if (/\b(which|that)\s+(was\s+)?(postpone|pospone|cancel)[a-z]*/i.test(lower)) {
+    return true;
+  }
+
+  // 4. Negative change instructions (guest requests to keep allocation)
+  // e.g. "Request Side by Side room dont change", "pls dun change", "do not change"
+  if (/\b(dont|don't|dun|do not|please dont|pls dont|pls dun)\s+(change|chg)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 5. In-stay operational change notes (room, chalet, bed, package changes during stay)
+  // e.g. "14-15 Change to dorm female", "pls help collect luggage when change room", "change to 3D2N"
+  if (/\bchange\s+(room|chalet|dorm|bed|luggage|pax|diver|package|\d+d\d+n)\b/i.test(lower) ||
+      /\bchange\s+to\s+(dorm|chalet|room|bayview|b\.?f\.? chalet|\d+d\d+n)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 6. Partial cancellations (e.g. "cancel 1 pax extension night")
+  if (/\bcancel\s+\d+\s*(pax|person|extension|night)\b/i.test(lower)) {
+    return true;
+  }
+
+  return false;
+}
+
 function isPostponedText(text) {
   if (!text || typeof text !== 'string') return false;
   const lower = text.toLowerCase().trim();
   if (!lower) return false;
+
+  // If remark describes a historical or incoming rebooked stay (e.g. "Postpone from Sept"),
+  // it is NOT an active postponement unless there is an explicit outgoing destination ("postpone to ...")
+  if (isRebookedOrHistoricalRemark(lower)) {
+    if (/\b(postpone|pospone|postpond|pospond)[a-z]*\s+to\s+[a-z0-9]+/i.test(lower) && !/\bfrom\s+[a-z0-9\s\-_/]+\s+to\s+[a-z0-9\s\-_/]+/i.test(lower)) {
+      return true;
+    }
+    return false;
+  }
 
   // Common exact substrings and frequent typo variants
   if (
@@ -465,6 +527,11 @@ function isCancelledText(text) {
   const lower = text.toLowerCase().trim();
   if (!lower) return false;
 
+  // Ignore historical cancellations or partial cancellations
+  if (isRebookedOrHistoricalRemark(lower)) {
+    return false;
+  }
+
   if (
     lower.includes('cancel') ||
     lower.includes('cancle') ||
@@ -496,8 +563,20 @@ function isCancelledText(text) {
 
 function isChangedText(text) {
   if (!text || typeof text !== 'string') return false;
-  const lower = text.toLowerCase();
-  return lower.includes('change') || lower.includes('changed') || lower.includes('chage') || lower.includes('chaged') || lower.includes('chanegd');
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
+
+  // Ignore rebooked/historical ("Changed from Sept to Oct", "dont change", "change room")
+  if (isRebookedOrHistoricalRemark(lower)) {
+    return false;
+  }
+
+  // Only consider genuinely transferred-out bookings (e.g. "Change to July", "Change to Code K2", "Change to E3 March")
+  if (/\b(change|changed|chage|chaged|chanegd)\s+to\s+(jan[a-z]*|feb[a-z]*|mar[a-z]*|apr[a-z]*|may|jun[a-z]*|jul[a-z]*|aug[a-z]*|sep[a-z]*|oct[a-z]*|nov[a-z]*|dec[a-z]*|code|[a-z]\d|\d{1,2}\/|\d{4})\b/i.test(lower)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isDoubleCodeText(text) {
@@ -523,6 +602,7 @@ module.exports = {
   getStayDays,
   isColorWhite,
   levenshteinDistance,
+  isRebookedOrHistoricalRemark,
   isPostponedText,
   isCancelledText,
   isChangedText,
