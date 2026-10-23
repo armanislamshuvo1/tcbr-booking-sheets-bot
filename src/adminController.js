@@ -764,7 +764,9 @@ async function createDashboardBooking(req, res) {
     const snapshot = await loadSnapshot();
     const headers = snapshot?.headers || [];
 
-    const { payload, entry } = await createCustomBooking(sanitizedFields, req.user.username, headers);
+    const result = await createCustomBooking(sanitizedFields, req.user.username, headers);
+    const entry = result?.entry || result;
+    const payload = result?.payload || result?.overrideMeta || {};
 
     if (snapshot) {
       const codeCol = headers.findIndex(h => h && h.toString().trim().toUpperCase() === 'CODE');

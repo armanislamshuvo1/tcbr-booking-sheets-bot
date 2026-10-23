@@ -870,11 +870,11 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 16px;">
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Check In Date</label>
-            <input type="text" id="edit-field-checkin" placeholder="e.g. 18th Oct" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="date" id="edit-field-checkin" class="search-input-field" oninput="recalcModalStayingDays()" onchange="recalcModalStayingDays()" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 0.88rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Check Out Date</label>
-            <input type="text" id="edit-field-checkout" placeholder="e.g. 21st Oct" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.88rem;">
+            <input type="date" id="edit-field-checkout" class="search-input-field" oninput="recalcModalStayingDays()" onchange="recalcModalStayingDays()" style="width: 100%; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: inherit; font-size: 0.88rem;">
           </div>
           <div>
             <label style="display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">Staying Days</label>

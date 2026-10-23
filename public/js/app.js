@@ -2965,6 +2965,53 @@ setInterval(() => {
 let currentEditingBookingKey = null;
 let currentEditingRowIndex = null;
 
+function toIsoDateInputValue(value) {
+  if (!value) return '';
+  const d = parseClientDate(value);
+  if (!d || isNaN(d.getTime())) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatOrdinalDate(dateOrStr) {
+  if (!dateOrStr) return '';
+  const d = dateOrStr instanceof Date ? dateOrStr : parseClientDate(dateOrStr);
+  if (!d || isNaN(d.getTime())) return String(dateOrStr).trim();
+  const day = d.getDate();
+  const months = ['Jan', 'Feb', 'March', 'April', 'May', 'June', 'July', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  let suffix = 'th';
+  if (day % 10 === 1 && day !== 11) suffix = 'st';
+  else if (day % 10 === 2 && day !== 12) suffix = 'nd';
+  else if (day % 10 === 3 && day !== 13) suffix = 'rd';
+  return `${day}${suffix} ${month}`;
+}
+
+function recalcModalStayingDays() {
+  const ciVal = document.getElementById('edit-field-checkin')?.value;
+  const coVal = document.getElementById('edit-field-checkout')?.value;
+  const stayDaysEl = document.getElementById('edit-field-staying-days');
+  if (!ciVal || !coVal || !stayDaysEl) return;
+
+  const ci = parseClientDate(ciVal);
+  const co = parseClientDate(coVal);
+  if (!ci || !co) return;
+
+  ci.setHours(0, 0, 0, 0);
+  co.setHours(0, 0, 0, 0);
+
+  const diffTime = co.getTime() - ci.getTime();
+  const nights = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  if (nights > 0) {
+    const days = nights + 1;
+    stayDaysEl.value = `${days}D${nights}N`;
+  } else if (nights === 0) {
+    stayDaysEl.value = '1D';
+  }
+}
+
 function openEditBookingModalByIndex(rowIndex, code) {
   let booking = (activeTab === 'bookings' ? currentBookings : allBookings).find(b => b.rowIndex === rowIndex);
   if (!booking) {
@@ -3038,9 +3085,29 @@ function openEditBookingModal(rowData, headers, rowIndex, overrideMeta, isOverri
   renderEditContactsList();
 
   // Dates & Duration
-  document.getElementById('edit-field-checkin').value = getFieldVal('CHECK IN', ['CHECK-IN', 'CHECKIN'], 7);
-  document.getElementById('edit-field-checkout').value = getFieldVal('CHECK OUT', ['CHECK-OUT', 'CHECKOUT'], 8);
-  document.getElementById('edit-field-staying-days').value = getFieldVal('STAYING DAYS', ['DAYS', 'STAY DURATION', 'ROOM DETAILS'], 9);
+  const rawCheckIn = getFieldVal('CHECK IN', ['CHECK-IN', 'CHECKIN'], 7);
+  const rawCheckOut = getFieldVal('CHECK OUT', ['CHECK-OUT', 'CHECKOUT'], 8);
+  const checkinInput = document.getElementById('edit-field-checkin');
+  const checkoutInput = document.getElementById('edit-field-checkout');
+  if (checkinInput) {
+    checkinInput.value = toIsoDateInputValue(rawCheckIn);
+    checkinInput.oninput = recalcModalStayingDays;
+    checkinInput.onchange = recalcModalStayingDays;
+  }
+  if (checkoutInput) {
+    checkoutInput.value = toIsoDateInputValue(rawCheckOut);
+    checkoutInput.oninput = recalcModalStayingDays;
+    checkoutInput.onchange = recalcModalStayingDays;
+  }
+
+  const existingStayDays = getFieldVal('STAYING DAYS', ['DAYS', 'STAY DURATION', 'ROOM DETAILS'], 9);
+  const stayDaysEl = document.getElementById('edit-field-staying-days');
+  if (stayDaysEl) {
+    stayDaysEl.value = existingStayDays;
+    if (!existingStayDays && (rawCheckIn || rawCheckOut)) {
+      recalcModalStayingDays();
+    }
+  }
 
   // Activities (supports SNORKELLING with double-L, SNORKELING, SNORKEL, or col 4)
   const snorkInput = document.getElementById('edit-field-snorkeling');
@@ -3205,6 +3272,19 @@ function openCreateBookingModal() {
   if (diveInput) diveInput.oninput = recalcModalActivityPax;
   if (courseInput) courseInput.oninput = recalcModalActivityPax;
 
+  const ciInput = document.getElementById('edit-field-checkin');
+  const coInput = document.getElementById('edit-field-checkout');
+  if (ciInput) {
+    ciInput.value = '';
+    ciInput.oninput = recalcModalStayingDays;
+    ciInput.onchange = recalcModalStayingDays;
+  }
+  if (coInput) {
+    coInput.value = '';
+    coInput.oninput = recalcModalStayingDays;
+    coInput.onchange = recalcModalStayingDays;
+  }
+
   const isAdmin = currentUser && currentUser.role === 'admin';
   const totalInput = document.getElementById('edit-field-total');
   const finGrid = totalInput ? totalInput.closest('div[style*="grid-template-columns"]') : null;
@@ -3294,6 +3374,17 @@ async function saveBookingEdit(event) {
   const sharingInputVal = document.getElementById('edit-field-sharing')?.value.trim() || '';
   const bedInputVal = document.getElementById('edit-field-bed')?.value.trim() || '';
 
+  const rawCheckInVal = document.getElementById('edit-field-checkin')?.value.trim() || '';
+  const rawCheckOutVal = document.getElementById('edit-field-checkout')?.value.trim() || '';
+  const formattedCheckIn = formatOrdinalDate(rawCheckInVal) || rawCheckInVal;
+  const formattedCheckOut = formatOrdinalDate(rawCheckOutVal) || rawCheckOutVal;
+
+  let stayingDaysVal = document.getElementById('edit-field-staying-days')?.value.trim() || '';
+  if (!stayingDaysVal && rawCheckInVal && rawCheckOutVal) {
+    recalcModalStayingDays();
+    stayingDaysVal = document.getElementById('edit-field-staying-days')?.value.trim() || '';
+  }
+
   const fields = {
     'NAME': document.getElementById('edit-field-name').value.trim(),
     'CODE': document.getElementById('edit-field-code').value.trim(),
@@ -3302,9 +3393,9 @@ async function saveBookingEdit(event) {
     'PHONE': phoneStr,
     'CONTACT': phoneStr,
     'WHATSAPP': phoneStr,
-    'CHECK IN': document.getElementById('edit-field-checkin').value.trim(),
-    'CHECK OUT': document.getElementById('edit-field-checkout').value.trim(),
-    'STAYING DAYS': document.getElementById('edit-field-staying-days').value.trim(),
+    'CHECK IN': formattedCheckIn,
+    'CHECK OUT': formattedCheckOut,
+    'STAYING DAYS': stayingDaysVal,
     'SNORKELING': document.getElementById('edit-field-snorkeling').value.trim(),
     'SNORKELLING': document.getElementById('edit-field-snorkeling').value.trim(),
     'DIVING': document.getElementById('edit-field-diving').value.trim(),

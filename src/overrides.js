@@ -569,7 +569,8 @@ async function createCustomBooking(fields, createdBy, headers = []) {
     createdBy || 'Admin'
   );
 
-  return buildCustomBookingEntry(bookingKey, payload, headers);
+  const entry = buildCustomBookingEntry(bookingKey, payload, headers);
+  return { payload: { bookingKey, ...payload }, entry };
 }
 
 /**
